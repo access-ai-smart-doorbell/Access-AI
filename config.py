@@ -54,6 +54,81 @@ FRAME_HEIGHT = 720
 HOST = "0.0.0.0"
 PORT = 8000
 
+# --- Security (Phase 17) ---------------------------------------------------
+# AUTH_TOKEN: a shared bearer token protecting EVERY sensitive route (camera
+# stream, mic, history, enrollment, mode...). Set it in .env:
+#     ACCESSAI_TOKEN=some-long-random-string
+# Clients send it as  Authorization: Bearer <token>  - or, for MJPEG <img> tags
+# and the WebSocket (where headers can't be set), as  ?token=<token>.
+# EMPTY = auth disabled (open LAN appliance, the pre-Phase-17 behaviour). The
+# boot self-check and /status warn loudly when the server is reachable beyond
+# localhost with auth off.
+AUTH_TOKEN = os.environ.get("ACCESSAI_TOKEN", "").strip()
+# CORS: with auth off we keep the permissive wildcard ONLY for reads; mutating
+# routes are same-origin + Flutter (no Origin header). With a token set, CORS
+# hardly matters (the token gates everything), so the wildcard stays for dev
+# convenience. Override to lock to specific origins, e.g. ["http://localhost"].
+CORS_ORIGINS = ["*"]
+# Rate limit for the pipeline-driving routes (/trigger, /ring, /ask, /listen,
+# /hear_visitor): each call can burn CPU and a paid cloud VLM request. Token
+# bucket per client IP: burst of RATE_BURST, refilling RATE_PER_MIN per minute.
+RATE_PER_MIN = 12
+RATE_BURST = 4
+# HMAC signing for the ESP32 /ring webhook. When RING_HMAC_SECRET is non-empty
+# (set ACCESSAI_RING_SECRET in .env), /ring REQUIRES the X-Ring-Signature
+# header = hex(HMAC_SHA256(secret, raw request body)) - an empty body signs the
+# empty string. This authenticates hardware doorbell presses even on an open
+# LAN, independently of AUTH_TOKEN (the ESP32 never holds the user token).
+RING_HMAC_SECRET = os.environ.get("ACCESSAI_RING_SECRET", "").strip()
+
+# Push notifications (docs/MOBILE_PUSH.md - Phase 17 scaffolding). OFF by
+# default: /register_push accepts + stores device tokens either way (additive,
+# harmless), but the event-time sender only runs when ENABLE_PUSH is True AND
+# FCM credentials exist. Point FCM_CREDENTIALS_JSON at a Firebase service-
+# account JSON and set FCM_PROJECT_ID to light up real delivery; until then a
+# registered token is simply remembered and the sender logs a one-line hint.
+ENABLE_PUSH = False
+FCM_PROJECT_ID = os.environ.get("ACCESSAI_FCM_PROJECT", "").strip()
+FCM_CREDENTIALS_JSON = os.environ.get("ACCESSAI_FCM_CREDENTIALS", "").strip()
+
+# --- Phase 17: accessibility conveniences ----------------------------------
+# Canned quick replies: one tap speaks the sentence at the door (much faster
+# than typing for a deaf user answering under time pressure). Shown as buttons
+# next to the free-text reply box on the dashboard, PWA, and mobile app.
+QUICK_REPLIES = [
+    "Please leave the package at the door.",
+    "One minute, I am coming.",
+    "Please wait.",
+    "Not interested, thank you.",
+    "Please come back later.",
+]
+
+# Auto-greeting: when an UNKNOWN visitor (or unrecognised delivery) rings, the
+# doorbell itself asks them to state their name and purpose, then listens for
+# a few seconds and attaches the transcription to the event - no manual "Hear
+# Visitor" press needed. Opt-in: it records a stranger's voice automatically,
+# which is a privacy decision the user must make (the spoken prompt itself
+# announces the recording). Known visitors are never auto-interrogated.
+ENABLE_AUTO_GREETING = False
+AUTO_GREETING_TEXT = ("Hello. The resident will be with you shortly. "
+                      "Please state your name and the purpose of your visit "
+                      "after the tone.")
+AUTO_GREETING_LISTEN_SECONDS = 6
+
+# Smart-home alert webhook: POST a small JSON to this URL on every doorbell
+# event, so room lights (Home Assistant / Hue bridge / any relay) can flash a
+# colour a deaf user sees anywhere in the house. "" = off. Payload:
+#   {"kind": "known|delivery|unknown|spoof", "color": "#RRGGBB",
+#    "name": "...", "announcement": "..."}
+# Fire-and-forget with a short timeout - it can never delay the doorbell.
+ALERT_WEBHOOK_URL = os.environ.get("ACCESSAI_ALERT_WEBHOOK", "").strip()
+ALERT_WEBHOOK_COLORS = {
+    "known": "#16a34a",      # green  - a recognised person
+    "delivery": "#f59e0b",   # amber  - likely delivery
+    "unknown": "#2563eb",    # blue   - unknown visitor
+    "spoof": "#dc2626",      # red    - possible spoof / warning
+}
+
 # ---------------------------------------------------------------------------
 # Accessibility
 # ---------------------------------------------------------------------------
@@ -80,6 +155,21 @@ ENABLE_TRANSLATE = True    # Phase 8  - multi-language translation  (LIVE)
 ENABLE_REID = True         # Phase 9  - visitor re-identification  (LIVE)
 ENABLE_AUTOENROLL = True    # Phase 9  - auto-enrollment of frequent unknowns  (LIVE)
 ENABLE_WAKEWORD = True     # Phase 10 - wake word + voice commands  (LIVE)
+ENABLE_MOTION = False      # Phase 17 - software motion trigger (trigger='motion').
+                           #   OFF by default: motion rings the FULL pipeline, so
+                           #   it belongs on a doorway camera, not a desk webcam
+                           #   (a laptop camera would fire on every passer-by).
+
+# Software motion detector tuning (accessai/motion_module.py). The detector
+# samples the shared latest-frame a few times a second and fires when at least
+# MOTION_MIN_AREA of the (downscaled) frame changes for MOTION_CONSECUTIVE
+# samples in a row. After a fire - or any doorbell/manual trigger - motion is
+# suppressed for MOTION_COOLDOWN seconds so one visitor isn't announced twice.
+MOTION_MIN_AREA = 0.02       # fraction of pixels that must change (2%)
+MOTION_CONSECUTIVE = 3       # samples in a row before firing (rejects flicker)
+MOTION_COOLDOWN = 30         # seconds of silence after a fire / ring
+MOTION_INTERVAL = 0.3        # seconds between samples (~3/s, sub-ms each)
+MOTION_WARMUP = 5            # seconds after boot before the first fire
 
 # ---------------------------------------------------------------------------
 # Face recognition (Phase 2 - InsightFace)
@@ -268,6 +358,26 @@ LANGUAGE_NAMES = {
 # 'They said: "..."' clause is already translated via translated_transcript.
 TRANSLATE_ANNOUNCEMENT = False
 
+# Phase 17: per-language ANNOUNCEMENT voices. When a non-English sentence is
+# spoken (the translated announcement above, or any speak_text with a lang
+# hint), the TTS worker picks the matching edge-tts neural voice below instead
+# of reading Malayalam/Hindi text with the English Kokoro voice. Offline or
+# missing language -> the normal Kokoro/edge/pyttsx3 cascade still speaks, so
+# nothing is ever silent. (Kokoro itself has hi/zh/ja phonemes only, so Indic
+# coverage comes from edge-tts - online, like translation itself.)
+LANGUAGE_VOICES = {
+    "hi": "hi-IN-SwaraNeural",
+    "ml": "ml-IN-SobhanaNeural",
+    "ta": "ta-IN-PallaviNeural",
+    "te": "te-IN-ShrutiNeural",
+    "kn": "kn-IN-SapnaNeural",
+    "bn": "bn-IN-TanishaaNeural",
+    "mr": "mr-IN-AarohiNeural",
+    "gu": "gu-IN-DhwaniNeural",
+    "pa": "pa-IN-OjasNeural",
+    "ur": "ur-IN-GulNeural",
+}
+
 # ---------------------------------------------------------------------------
 # Behaviour
 # ---------------------------------------------------------------------------
@@ -334,16 +444,23 @@ AUTOENROLL_SUGGEST_AFTER = 5   # cluster size that triggers a "save this?" promp
 #                 the user must make deliberately (toggle in the dashboard, or set
 #                 WAKEWORD_ALWAYS_ON = True here).
 #
-# Detector: openWakeWord (pure-python, onnxruntime, CPU). It ships pretrained
-# models (hey_jarvis, alexa, hey_mycroft) that auto-download on first use. A
-# custom "Hey Access" model needs training data we don't have yet, so we ship a
-# pretrained model as a PLACEHOLDER wake phrase (surfaced in /status + README).
+# Detector: openWakeWord (pure-python, onnxruntime, CPU). Model priority (same
+# drop-in auto-upgrade pattern as antispoof / re-ID):
+#   A CUSTOM   -> the first *.onnx in WAKEWORD_MODEL_DIR (models/wakeword/).
+#                 Build it OFFLINE with `scripts/train_wakeword.py` - it
+#                 synthesizes "Hey Access" with the Phase-11 Kokoro voices,
+#                 trains a tiny classifier on openWakeWord's frozen embeddings,
+#                 and exports hey_access.onnx. No longer a placeholder.
+#   B PRETRAINED -> openWakeWord's shipped phrases (hey_jarvis, alexa, ...)
+#                 auto-download on first use; used as a loudly-logged
+#                 PLACEHOLDER phrase until the custom model exists.
 # If openWakeWord can't be imported, always-on degrades to unavailable and
 # push-to-talk still works - the app never crashes.
-WAKEWORD_MODEL = "hey_jarvis"     # pretrained placeholder phrase; say "hey jarvis"
+WAKEWORD_MODEL_DIR = os.path.join(BASE_DIR, "models", "wakeword")
+WAKEWORD_MODEL = "hey_jarvis"     # pretrained FALLBACK phrase (used only when no custom .onnx exists)
 WAKEWORD_THRESHOLD = 0.5          # 0-1 detection score; RAISE to reduce false wakes
 WAKEWORD_COMMAND_SECONDS = 4      # seconds of command audio captured after a wake
-WAKEWORD_ALWAYS_ON = True         # start the always-listening mic at boot ("hey jarvis"); toggle off in the dashboard
+WAKEWORD_ALWAYS_ON = True         # start the always-listening mic at boot ("hey access"); toggle off in the dashboard
 WAKEWORD_COOLDOWN = 6             # min seconds between two wake detections (debounce)
 WAKEWORD_INFERENCE_FRAMEWORK = "onnx"  # openWakeWord backend: "onnx" (installed) | "tflite"
 

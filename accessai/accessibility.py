@@ -390,11 +390,15 @@ class AccessibilityEngine:
         still composing + storing the text. Deaf/both VISUAL delivery is handled by
         the server broadcasting the event over WebSocket; the browser renders big
         text + flash + vibrate. Returns the composed text.
-        """
+
+        Phase 17: a per-kind identity earcon (known/delivery/unknown/spoof)
+        leads the sentence, so a blind user classifies the visitor the moment
+        audio starts."""
         text = compose_announcement(ev)
         ev.announcement_text = text
         if speak and self.mode in ("blind", "both"):
-            self.tts.speak(text)
+            from .visitor_event import alert_kind
+            self.tts.speak(text, earcon=alert_kind(ev))
         return text
 
     def set_mode(self, mode: str) -> str:
@@ -403,10 +407,11 @@ class AccessibilityEngine:
         self.mode = mode
         return self.mode
 
-    def speak_text(self, text: str) -> bool:
+    def speak_text(self, text: str, lang: str = "") -> bool:
         """Speak an arbitrary sentence (used by the two-way /reply route).
 
         Speaks regardless of mode: a reply is an explicit user action, not an
-        automatic announcement. Returns whether it was actually queued/spoken.
-        """
-        return self.tts.speak(text)
+        automatic announcement. `lang` (Phase 17) hints the text's language so
+        a translated sentence is voiced by a matching per-language voice.
+        Returns whether it was actually queued/spoken."""
+        return self.tts.speak(text, lang=lang)

@@ -365,7 +365,7 @@ class VLMModule:
 
     def detailed_report(self, frame_bgr, facts="") -> str:
         """Level-2 of the semantic reasoning engine: a full spoken visitor
-        report, on request ("jarvis, give me the details").
+        report, on request ("hey access, give me the details").
 
         Level 1 is the instant pipeline alert (who + headline, 2-3 s). Level 3
         is answer_question (interactive follow-ups). This sits between them: one

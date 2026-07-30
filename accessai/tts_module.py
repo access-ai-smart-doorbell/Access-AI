@@ -106,6 +106,44 @@ except Exception:                                         # pragma: no cover
 # Drop announcements if more than this many are already waiting (flood guard).
 _MAX_QUEUE = 8
 
+# --- Earcons (Phase 17 accessibility) ---------------------------------------
+# A half-second identity chime played BEFORE the spoken sentence, one per
+# alert kind, so a blind user classifies the visitor the instant audio starts
+# - without waiting for the sentence. Pure numpy synthesis at first use; no
+# asset files. Patterns are deliberately distinct in contour AND rhythm
+# (contour alone is lost on users with pitch-perception differences):
+#   known    - rising major third, two notes            (friendly "ta-da")
+#   delivery - three quick even mid taps                ("knock knock knock")
+#   unknown  - single long neutral mid tone             (plain doorbell-ish)
+#   spoof    - falling tritone, two long low notes      (unmistakably "wrong")
+_EARCON_SR = 24000
+_EARCON_SPECS = {
+    "known":    [(659.3, 0.14, 0.02), (830.6, 0.22, 0.16)],
+    "delivery": [(523.3, 0.10, 0.02), (523.3, 0.10, 0.16), (523.3, 0.10, 0.30)],
+    "unknown":  [(440.0, 0.35, 0.02)],
+    "spoof":    [(466.2, 0.28, 0.02), (329.6, 0.34, 0.30)],
+}
+
+
+def _synth_earcon(kind: str):
+    """Render one earcon to a float32 sample array (None for unknown kinds)."""
+    import numpy as _np
+    spec = _EARCON_SPECS.get(kind)
+    if not spec:
+        return None
+    total = max(off + dur for _f, dur, off in spec) + 0.08
+    out = _np.zeros(int(total * _EARCON_SR), dtype=_np.float32)
+    for freq, dur, off in spec:
+        n = int(dur * _EARCON_SR)
+        t = _np.arange(n) / _EARCON_SR
+        tone = _np.sin(2 * _np.pi * freq * t)
+        # 12ms attack / exponential release envelope - no clicks.
+        env = _np.minimum(1.0, t / 0.012) * _np.exp(-t / (dur * 0.55))
+        i = int(off * _EARCON_SR)
+        out[i:i + n] += (tone * env * 0.45).astype(_np.float32)
+    peak = float(_np.max(_np.abs(out))) or 1.0
+    return out / peak * 0.6
+
 # Kokoro model file candidates (v1.0 has af_heart/af_bella/...; v0.19 fallback).
 _KOKORO_MODEL_NAMES = ["kokoro-v1.0.onnx", "kokoro-v0_19.onnx", "kokoro.onnx"]
 _KOKORO_VOICES_NAMES = ["voices-v1.0.bin", "voices-v1.0.json", "voices.bin",
@@ -119,7 +157,7 @@ class TTSModule:
                  voice: str = "af_heart", model_dir: str = "",
                  speed: float = 1.0, edge_voice: str = "en-US-AriaNeural",
                  rate: int = 165, volume: float = 1.0, lang: str = "en-us",
-                 voice_choices=None):
+                 voice_choices=None, lang_voices=None):
         self._enabled = enabled
         self._model_dir = model_dir
         self._speed = float(speed)
@@ -128,6 +166,8 @@ class TTSModule:
         self._volume = volume
         self._edge_default = edge_voice or "en-US-AriaNeural"
         self._voice_choices = list(voice_choices or [])
+        # Phase 17: ISO code -> edge-tts voice for non-English announcements.
+        self._lang_voices = dict(lang_voices or {})
 
         # Active voice state, protected by _lock. set_voice() mutates these for
         # FUTURE utterances; the worker reads them (under the lock) per item, so a
@@ -140,7 +180,9 @@ class TTSModule:
         self._active_engine = None       # "kokoro" | "edge" | "pyttsx3" | "none"
         self._active_voice = ""          # backend-specific voice id
 
-        self._queue: "queue.Queue[str]" = queue.Queue()
+        # Queue items are (earcon_kind, text) tuples; earcon_kind may be "".
+        self._queue: "queue.Queue" = queue.Queue()
+        self._earcons: dict = {}     # alert kind -> cached sample array
         self._alive = False
         self._worker = None
         self._warned_no_audio = False
@@ -239,17 +281,41 @@ class TTSModule:
     # ------------------------------------------------------------------
     def _run(self) -> None:
         while True:
-            text = self._queue.get()
-            if text is None:                              # pragma: no cover
+            item = self._queue.get()
+            if item is None:                              # pragma: no cover
                 break
+            earcon, text, lang = item
             with self._lock:
                 engine = self._active_engine
                 voice = self._active_voice
             try:
+                if earcon:
+                    self._play_earcon(earcon)
+                # Phase 17: a non-English lang hint with a mapped edge voice
+                # overrides the active voice for THIS utterance only, so the
+                # words are spoken by a voice that has their phonemes. Failure
+                # (offline etc.) falls through to the normal cascade below.
+                lang_voice = self._lang_voices.get(lang) if lang else None
+                if lang_voice and lang not in ("en",):
+                    if self._speak_edge(lang_voice, text):
+                        continue
+                    print(f"[TTSModule] '{lang}' voice {lang_voice} failed "
+                          "(offline?); speaking with the default voice.")
                 self._synth_and_play(engine, voice, text)
             except Exception as e:                        # pragma: no cover
                 # One failing utterance must NEVER kill the worker thread.
                 print(f"[TTSModule] speak failed on {engine}:{voice}: {e}")
+
+    def _play_earcon(self, kind: str) -> None:
+        """Play the identity chime for `kind` (cached synth, best-effort)."""
+        try:
+            if kind not in self._earcons:
+                self._earcons[kind] = _synth_earcon(kind)
+            samples = self._earcons[kind]
+            if samples is not None:
+                self._play(samples, _EARCON_SR)
+        except Exception as e:                            # pragma: no cover
+            print(f"[TTSModule] earcon '{kind}' failed (continuing): {e}")
 
     def _synth_and_play(self, engine: str, voice: str, text: str) -> None:
         """Dispatch to the active backend, cascading on synth failure."""
@@ -310,12 +376,14 @@ class TTSModule:
         return self._play(samples, sr)
 
     # --- Phase 14: synth to WAV bytes for the mobile app (/speak_audio) --------
-    def synth_wav_bytes(self, text: str):
+    def synth_wav_bytes(self, text: str, lang: str = ""):
         """Synthesize `text` to WAV bytes WITHOUT playing it on the server.
 
         Powers GET /speak_audio so the mobile app can speak the announcement on the
         PHONE in the natural Kokoro voice. Prefers Kokoro (offline, private); falls
-        back to edge-tts (online) if that's the active engine. Returns
+        back to edge-tts (online) if that's the active engine. `lang` (Phase 17)
+        routes a non-English text to its LANGUAGE_VOICES edge voice first, so a
+        translated announcement reaches the phone in a matching voice. Returns
         (wav_bytes, sample_rate), or (None, 0) when no backend can synthesize (the
         caller then lets the phone fall back to the browser voice). Never raises."""
         text = (text or "").strip()
@@ -323,6 +391,14 @@ class TTSModule:
             return None, 0
         with self._lock:
             engine, voice = self._active_engine, self._active_voice
+        # Phase 17: a mapped non-English language goes to its edge voice first
+        # (Kokoro has no Indic phonemes - it would mangle the words).
+        lang = (lang or "").lower()
+        lang_voice = self._lang_voices.get(lang) if lang and lang != "en" else None
+        if lang_voice:
+            out = self._edge_wav_bytes(lang_voice, text)
+            if out is not None:
+                return out
         # Prefer Kokoro (offline, natural, private) whenever its model is present.
         if self._backend_usable("kokoro"):
             kv = voice if (engine == "kokoro" and voice) else "af_heart"
@@ -540,8 +616,18 @@ class TTSModule:
             self._active_voice = v
         return (True, f"voice set to {eng}:{v}")
 
-    def speak(self, text: str) -> bool:
+    def speak(self, text: str, earcon: str = "", lang: str = "") -> bool:
         """Queue text for speaking. Returns True if queued, else False.
+
+        `earcon` (optional): an alert-kind name ("known"/"delivery"/"unknown"/
+        "spoof") whose half-second identity chime plays before the sentence,
+        so a blind user classifies the visitor before the words start.
+
+        `lang` (optional, Phase 17): ISO code of the TEXT's language. A
+        non-English code with a LANGUAGE_VOICES mapping routes this one
+        utterance to the matching edge-tts voice (so Malayalam text is spoken
+        by a Malayalam voice, not English phonemes); offline or unmapped ->
+        the normal cascade speaks it anyway.
 
         Never blocks and never raises. Drops the request if TTS is unavailable or
         the queue is flooded (stale announcements aren't worth backing up)."""
@@ -551,7 +637,7 @@ class TTSModule:
             print("[TTSModule] Queue full; dropping announcement.")
             return False
         try:
-            self._queue.put_nowait(text)
+            self._queue.put_nowait((earcon, text, lang or ""))
             return True
         except Exception:                                 # pragma: no cover
             return False

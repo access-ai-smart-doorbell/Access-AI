@@ -19,7 +19,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import declarative_base, sessionmaker, Mapped, mapped_column
 
 from .visitor_event import (VisitorEvent, Identity, DetectedObject,
-                            people_to_dicts)
+                            people_to_dicts, alert_kind)
 
 Base = declarative_base()
 
@@ -106,6 +106,22 @@ class UnknownClusterRow(Base):
     suggested: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class PushTokenRow(Base):
+    """A registered push-notification device token (docs/MOBILE_PUSH.md).
+
+    Additive Phase-17 scaffolding: /register_push stores tokens here so a
+    doorbell event can later be delivered to a CLOSED app via FCM. `platform`
+    is a freeform hint ("web" | "android" | "ios"); `mode` mirrors the
+    device's accessibility mode so a future sender can tailor the payload."""
+    __tablename__ = "push_tokens"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    token: Mapped[str] = mapped_column(Text, unique=True, index=True)
+    platform: Mapped[str] = mapped_column(String(16), default="web")
+    mode: Mapped[str] = mapped_column(String(16), default="both")
+    created_at: Mapped[_dt.datetime] = mapped_column(DateTime, default=_dt.datetime.utcnow)
+    last_seen: Mapped[_dt.datetime] = mapped_column(DateTime, default=_dt.datetime.utcnow)
+
+
 Index("ix_events_timestamp", EventRow.timestamp)
 
 
@@ -114,6 +130,21 @@ class Database:
         # `future=True` is the SQLAlchemy 2.x style engine.
         self.engine = create_engine(f"sqlite:///{path}", future=True,
                                      connect_args={"check_same_thread": False})
+        # Concurrency: writers arrive from server executor threads AND the
+        # background VLM-enrich thread. Default SQLite journaling takes an
+        # exclusive lock per write, so overlapping writes raise "database is
+        # locked". WAL lets readers proceed during a write, and busy_timeout
+        # makes a competing writer wait (up to 5s) instead of raising.
+        from sqlalchemy import event as _sa_event
+
+        @_sa_event.listens_for(self.engine, "connect")
+        def _set_sqlite_pragmas(dbapi_conn, _record):
+            cur = dbapi_conn.cursor()
+            cur.execute("PRAGMA journal_mode=WAL")
+            cur.execute("PRAGMA busy_timeout=5000")
+            cur.execute("PRAGMA synchronous=NORMAL")   # safe with WAL, faster
+            cur.close()
+
         Base.metadata.create_all(self.engine)
         # Phase 12: create_all() only CREATES missing tables - it never ADDs a
         # column to a table that already exists. An older accessai.db therefore
@@ -181,10 +212,30 @@ class Database:
             s.add(row)
             s.commit()
 
-    def recent_events(self, limit: int = 50) -> List[dict]:
+    def recent_events(self, limit: int = 50, q: str = "") -> List[dict]:
+        """Newest events first; `q` (optional) filters case-insensitively
+        across the human-searchable fields: who (name), why (intent), what
+        was said/announced, the date prefix, and how it was triggered.
+        Objective 7: 'a searchable visitor history'."""
         with self.Session() as s:
+            query = s.query(EventRow)
+            q = (q or "").strip()
+            if q:
+                from sqlalchemy import or_
+                like = f"%{q}%"
+                query = query.filter(or_(
+                    EventRow.identity_name.ilike(like),
+                    EventRow.intent.ilike(like),
+                    EventRow.announcement_text.ilike(like),
+                    EventRow.speech_transcript.ilike(like),
+                    EventRow.scene_summary.ilike(like),
+                    EventRow.ocr_text.ilike(like),
+                    EventRow.people.ilike(like),      # JSON: matches any name
+                    EventRow.timestamp.ilike(f"{q}%"),  # date prefix 2026-07-19
+                    EventRow.trigger.ilike(like),
+                ))
             rows = (
-                s.query(EventRow)
+                query
                 .order_by(EventRow.id.desc())
                 .limit(limit)
                 .all()
@@ -319,6 +370,42 @@ class Database:
             return s.query(ReidRow).count()
 
     # ------------------------------------------------------------------
+    # Phase 17: push-token registry (docs/MOBILE_PUSH.md scaffolding).
+    # Tokens are upserted (a device re-registering refreshes last_seen and
+    # mode); the future FCM sender iterates push_tokens() per event.
+    # ------------------------------------------------------------------
+    def push_register(self, token: str, platform: str = "web",
+                      mode: str = "both") -> bool:
+        """Store or refresh a device push token. Returns True if NEW."""
+        with self.Session() as s:
+            row = s.query(PushTokenRow).filter(
+                PushTokenRow.token == token).first()
+            if row is not None:
+                row.platform = platform or row.platform
+                row.mode = mode or row.mode
+                row.last_seen = _dt.datetime.utcnow()
+                s.commit()
+                return False
+            s.add(PushTokenRow(token=token, platform=platform or "web",
+                               mode=mode or "both"))
+            s.commit()
+            return True
+
+    def push_unregister(self, token: str) -> bool:
+        """Remove a device token (app uninstalled / permission revoked)."""
+        with self.Session() as s:
+            n = s.query(PushTokenRow).filter(
+                PushTokenRow.token == token).delete()
+            s.commit()
+            return bool(n)
+
+    def push_tokens(self) -> List[dict]:
+        """All registered tokens (for the event fan-out sender)."""
+        with self.Session() as s:
+            return [{"token": r.token, "platform": r.platform, "mode": r.mode}
+                    for r in s.query(PushTokenRow).all()]
+
+    # ------------------------------------------------------------------
     # Phase 9: Unknown-face cluster helpers (for auto-enrollment).
     #
     # Each row is ONE unknown-face sighting: an embedding + the event it came from.
@@ -403,8 +490,9 @@ class Database:
     # ------------------------------------------------------------------
     @staticmethod
     def _event_row_to_dict(r: EventRow) -> dict:
-        """Rebuild a VisitorEvent-shaped dict (nested identity, parsed lists)."""
-        return {
+        """Rebuild a VisitorEvent-shaped dict (nested identity, parsed lists).
+        Adds the derived alert_kind, matching VisitorEvent.to_dict()."""
+        d = {
             "event_id": r.event_id,
             "timestamp": r.timestamp,
             "trigger": r.trigger,
@@ -434,6 +522,8 @@ class Database:
             "announcement_text": r.announcement_text,
             "snapshot_path": r.snapshot_path,
         }
+        d["alert_kind"] = alert_kind(d)
+        return d
 
 
 def _safe_json_list(s: str) -> list:

@@ -130,7 +130,7 @@ _QUESTION_WORDS = (
     "what", "where", "why", "how", "which", "whose", "when", "is ", "are ",
     "does ", "do ", "can ", "could ", "was ", "were ", "colour", "color",
     "wearing", "holding", "carrying", "doing", "describe",
-    # natural phrasings from the hands-free wake flow ("hey jarvis, ...")
+    # natural phrasings from the hands-free wake flow ("hey access, ...")
     "tell me", "did ", "has ", "have ", "who ", "am i", "should i",
 )
 

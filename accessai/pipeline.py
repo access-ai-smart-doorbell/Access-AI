@@ -127,6 +127,12 @@ class Pipeline:
         self._cooldown = float(cooldown)
         self._last_spoken_text = ""
         self._last_spoken_at = 0.0
+        # Concurrency: /trigger, /ring, and the wake-word thread can all reach
+        # run_once at the same time (each on its own executor thread). One lock
+        # serializes whole runs - the pipeline mutates shared state (cooldown
+        # fields, percept pool) and speaks through a single TTS engine, so two
+        # interleaved runs would race each other and talk over themselves.
+        self._run_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     def run_once(self, frame_bgr, trigger: str = "manual",
@@ -138,7 +144,12 @@ class Pipeline:
         set, the speech step records live from the mic - which BLOCKS for
         SPEECH_SECONDS, so the announcement arrives after the recording window.
         The server runs this in an executor to keep the event loop responsive.
+        Concurrent callers queue on the run lock and execute one at a time.
         """
+        with self._run_lock:
+            return self._run_once_locked(frame_bgr, trigger, audio)
+
+    def _run_once_locked(self, frame_bgr, trigger, audio) -> VisitorEvent:
         ev = VisitorEvent(
             event_id=self._new_event_id(),
             timestamp=_dt.datetime.now().isoformat(timespec="seconds"),
@@ -282,9 +293,11 @@ class Pipeline:
                       and not skip_known and something_present)
         # Defer whenever the VLM will run: the fast local announcement (name, or
         # age/gender for unknowns) is spoken NOW and the VLM description - for
-        # known and unknown alike - follows in the background enrich.
-        self._defer_vlm = bool(vlm_wanted and self.vlm_async_enrich)
-        if vlm_wanted and not self._defer_vlm:
+        # known and unknown alike - follows in the background enrich. A LOCAL
+        # variable (not instance state): it belongs to this run only, and as a
+        # field it raced concurrent runs before the run lock existed.
+        defer_vlm = bool(vlm_wanted and self.vlm_async_enrich)
+        if vlm_wanted and not defer_vlm:
             result = self.vlm.describe_and_read(
                 frame_bgr, facts=self._vlm_facts(ev))
             self._apply_vlm_result(ev, result)
@@ -376,7 +389,7 @@ class Pipeline:
             # first line is the ONLY thing spoken now - so it must never be
             # suppressed by the cooldown, otherwise a repeat unknown hears nothing
             # until the (delayed) follow-up. The full details follow moments later.
-            instant_alert = getattr(self, "_defer_vlm", False)
+            instant_alert = defer_vlm
             in_cooldown = (
                 not instant_alert
                 and self._cooldown > 0
@@ -394,12 +407,18 @@ class Pipeline:
                 target = getattr(self.translate, "user_language", "en")
                 whole = self.translate.translate(ev.announcement_text,
                                                  src_lang="en", target_lang=target)
-                if (whole and whole.strip()
-                        and whole.strip() != ev.announcement_text.strip()):
+                translated = bool(
+                    whole and whole.strip()
+                    and whole.strip() != ev.announcement_text.strip())
+                if translated:
                     ev.announcement_text = whole
                 if want_audio and getattr(self.access, "mode", "both") in (
                         "blind", "both"):
-                    self.access.speak_text(ev.announcement_text)
+                    # Phase 17: hint the text's language so a per-language edge
+                    # voice speaks it (Malayalam words in a Malayalam voice).
+                    self.access.speak_text(
+                        ev.announcement_text,
+                        lang=target if translated else "")
             if not in_cooldown:
                 self._last_spoken_text = text
                 self._last_spoken_at = now
@@ -416,7 +435,7 @@ class Pipeline:
         # for a deferred unknown visitor, run the slow VLM in the BACKGROUND and
         # update the stored event + dashboard when it returns. This never blocks
         # run_once, so the doorbell stays fast; the enrich thread is best-effort.
-        if getattr(self, "_defer_vlm", False):
+        if defer_vlm:
             self._enrich_async(ev, frame_bgr)
         return ev
 

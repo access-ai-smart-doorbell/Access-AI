@@ -124,7 +124,9 @@ def _print_selfcheck(pipeline, tts, wakeword, speech, access) -> None:
                        ok(tts.available), tts.engine_name()),
         _selfcheck_row("wakeword", config.ENABLE_WAKEWORD,
                        wakeword is not None and ok(wakeword.available),
-                       (f"{wakeword.model_name} (placeholder phrase)"
+                       ((f"{wakeword.model_name} (custom)"
+                         if not ok(wakeword.is_placeholder)
+                         else f"{wakeword.model_name} (placeholder phrase)")
                         if wakeword else "openWakeWord not built")),
     ]
     try:
@@ -285,7 +287,8 @@ def main() -> None:
                     rate=config.TTS_RATE,
                     volume=config.TTS_VOLUME,
                     lang=config.KOKORO_LANG,
-                    voice_choices=config.VOICE_CHOICES)
+                    voice_choices=config.VOICE_CHOICES,
+                    lang_voices=getattr(config, "LANGUAGE_VOICES", {}))
     access = AccessibilityEngine(tts=tts, mode=config.ACCESSIBILITY_MODE)
     print(f"[AccessAI] TTS: {tts.current_voice()} "
           f"(backends: {tts.backends()}) | mode: {access.mode}")
@@ -303,7 +306,8 @@ def main() -> None:
         wakeword = WakeWordModule(model=config.WAKEWORD_MODEL,
                                   threshold=config.WAKEWORD_THRESHOLD,
                                   cooldown=config.WAKEWORD_COOLDOWN,
-                                  inference_framework=config.WAKEWORD_INFERENCE_FRAMEWORK)
+                                  inference_framework=config.WAKEWORD_INFERENCE_FRAMEWORK,
+                                  model_dir=getattr(config, "WAKEWORD_MODEL_DIR", ""))
         avail = "available" if wakeword.available() else "unavailable (push-to-talk only)"
         print(f"[AccessAI] Wake word: {wakeword.model_name} | {avail}")
 
@@ -413,7 +417,45 @@ def main() -> None:
         print("[AccessAI] Voice: PUSH-TO-TALK only (/listen). "
               "Always-on wake word unavailable.")
 
+    # Phase 17: software motion trigger (trigger='motion'). Watches the shared
+    # latest-frame with a cheap absdiff detector; on confirmed motion it runs
+    # the SAME pipeline as the doorbell and broadcasts the event to open
+    # dashboards. Suppressed for MOTION_COOLDOWN after any fire.
+    motion = None
+    if getattr(config, "ENABLE_MOTION", False):
+        from accessai.motion_module import MotionModule
+        motion = MotionModule(latest,
+                              min_area=config.MOTION_MIN_AREA,
+                              consecutive=config.MOTION_CONSECUTIVE,
+                              cooldown=config.MOTION_COOLDOWN,
+                              interval=config.MOTION_INTERVAL,
+                              warmup=config.MOTION_WARMUP)
+
+        def _on_motion():
+            frame = latest.get()
+            if frame is None:
+                return
+            ev = pipeline.run_once(frame, trigger="motion")
+            bridge = getattr(app.state, "broadcast_threadsafe", None)
+            if bridge is not None:
+                from accessai.server import _jsonify
+                bridge({"type": "event", "event": _jsonify(ev.to_dict())})
+
+        motion.set_on_motion(_on_motion)
+        motion.start()
+    app.state.motion = motion
+
     _print_selfcheck(pipeline, tts, wakeword, speech, access)
+
+    # Phase 17: loudly flag the risky combination - reachable beyond localhost
+    # with no auth token. One line, every boot, until it's fixed or accepted.
+    if config.HOST not in ("127.0.0.1", "localhost") and not config.AUTH_TOKEN:
+        print("[AccessAI] SECURITY WARNING: server is reachable from the LAN "
+              f"(HOST={config.HOST}) with NO auth token. Anyone on the network "
+              "can view the camera and control the doorbell. Set "
+              "ACCESSAI_TOKEN=<random string> in .env to require a token.")
+    if config.RING_HMAC_SECRET:
+        print("[AccessAI] /ring webhook: HMAC-signed (X-Ring-Signature).")
 
     print(f"\nOpen the dashboard: http://localhost:{config.PORT}\n")
     try:

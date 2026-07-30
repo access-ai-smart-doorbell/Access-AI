@@ -38,7 +38,11 @@ Routes:
 """
 
 import asyncio
+import hashlib
+import hmac as _hmac
+import json
 import os
+import secrets as _secrets
 import threading
 import time
 
@@ -54,6 +58,51 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import voice_commands
 from .face_module import is_safe_person_name
+
+
+# --- Security helpers (Phase 17) -------------------------------------------
+# Paths anyone may fetch WITHOUT a token: the UI shells and their static
+# assets. They contain no data - every piece of live/stored information the
+# shells display comes from the API routes below, which ARE protected. The
+# dashboard/PWA ask the user for the token on first load and store it locally.
+_PUBLIC_PATHS = ("/", "/app", "/app/", "/app/manifest.webmanifest",
+                 "/app/sw.js", "/favicon.ico")
+_PUBLIC_PREFIXES = ("/static/", "/app/")
+
+
+def _is_public(path: str) -> bool:
+    return path in _PUBLIC_PATHS or path.startswith(_PUBLIC_PREFIXES)
+
+
+class _TokenBucket:
+    """Per-IP token bucket for the pipeline-driving routes. Thread-safe.
+
+    Each expensive call (full pipeline run, possibly a paid cloud VLM request)
+    consumes one token; the bucket refills at per_min/60 tokens per second up
+    to `burst`. A drained bucket -> 429 with a clean JSON body.
+    """
+
+    def __init__(self, per_min: float, burst: int):
+        self.rate = max(0.01, float(per_min)) / 60.0
+        self.burst = max(1, int(burst))
+        self._lock = threading.Lock()
+        self._state = {}          # ip -> (tokens, last_ts)
+
+    def allow(self, ip: str) -> bool:
+        now = time.monotonic()
+        with self._lock:
+            tokens, last = self._state.get(ip, (float(self.burst), now))
+            tokens = min(self.burst, tokens + (now - last) * self.rate)
+            if tokens < 1.0:
+                self._state[ip] = (tokens, now)
+                return False
+            self._state[ip] = (tokens - 1.0, now)
+            # Bound the table so a spoofed-IP flood can't grow it unboundedly.
+            if len(self._state) > 1000:
+                oldest = sorted(self._state.items(), key=lambda kv: kv[1][1])
+                for k, _v in oldest[:500]:
+                    self._state.pop(k, None)
+            return True
 
 
 class LatestFrame:
@@ -83,14 +132,58 @@ def make_app(*, pipeline, latest: LatestFrame, db, web_dir: str,
              visitor_listen_seconds: int = 6) -> FastAPI:
     app = FastAPI(title="AccessAI")
 
-    # Phase 16: allow the Flutter app's WEB target (flutter run -d chrome) and any
-    # other browser origin on the LAN to call these routes cross-origin. The
-    # native Android build talks over dio and doesn't need CORS, but a permissive
-    # policy here is harmless for a LAN appliance and unblocks quick web checks.
-    # Additive only - it does not alter any existing route's behaviour.
+    # --- Phase 17: bearer-token auth + rate limiting (opt-in via config) -----
+    # AUTH_TOKEN set => every non-public route requires
+    #   Authorization: Bearer <token>   or   ?token=<token>
+    # (the query form exists for MJPEG <img> tags and the WebSocket, where
+    # custom headers aren't possible). Comparison is constant-time. AUTH_TOKEN
+    # empty => open appliance, exactly the pre-Phase-17 behaviour.
+    auth_token = str(getattr(cfg, "AUTH_TOKEN", "") or "")
+    ring_secret = str(getattr(cfg, "RING_HMAC_SECRET", "") or "")
+    bucket = _TokenBucket(getattr(cfg, "RATE_PER_MIN", 12),
+                          getattr(cfg, "RATE_BURST", 4))
+    _EXPENSIVE = ("/trigger", "/ring", "/ask", "/listen", "/hear_visitor")
+
+    def _token_ok(request) -> bool:
+        if not auth_token:
+            return True
+        hdr = request.headers.get("authorization", "")
+        supplied = hdr[7:] if hdr.lower().startswith("bearer ") else \
+            request.query_params.get("token", "")
+        return _secrets.compare_digest(supplied, auth_token)
+
+    @app.middleware("http")
+    async def _security_mw(request: Request, call_next):
+        path = request.url.path
+        if not _is_public(path):
+            # /ring is exempt here when a ring secret exists - the endpoint
+            # itself verifies the HMAC over the raw body (the body can't be
+            # read in middleware without breaking the downstream handler).
+            ring_hmac_mode = (path == "/ring" and ring_secret)
+            if not ring_hmac_mode and not _token_ok(request):
+                return JSONResponse(
+                    {"error": "unauthorized",
+                     "hint": "send Authorization: Bearer <token> or ?token="},
+                    status_code=401)
+            if any(path == p for p in _EXPENSIVE):
+                ip = request.client.host if request.client else "?"
+                if not bucket.allow(ip):
+                    return JSONResponse(
+                        {"error": "rate limited",
+                         "hint": "too many pipeline runs; wait a few seconds"},
+                        status_code=429)
+        return await call_next(request)
+
+    # Phase 16: allow the Flutter app's WEB target (flutter run -d chrome) and
+    # other browser origins on the LAN to call these routes cross-origin.
+    # Phase 17: the origin list comes from config (default "*"). With AUTH_TOKEN
+    # set the wildcard is safe - a hostile page can send requests but not the
+    # token (allow_credentials stays False, and the token lives in the app's
+    # own storage, unreachable cross-origin). With auth OFF, tighten
+    # CORS_ORIGINS in config.py if drive-by pages on the LAN are a concern.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=list(getattr(cfg, "CORS_ORIGINS", ["*"]) or ["*"]),
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -100,7 +193,10 @@ def make_app(*, pipeline, latest: LatestFrame, db, web_dir: str,
     # the accessibility engine so toggling the mode turns speech on/off live.
     start_mode = access.mode if access is not None else \
         (mode if mode in _VALID_MODES else "both")
-    state = {"mode": start_mode}
+    # "mode" is the household default. "device_modes" holds per-device overrides
+    # (Phase 17): one paired phone can run Blind while another runs Deaf and the
+    # dashboard stays on Both. A device with no override follows the default.
+    state = {"mode": start_mode, "device_modes": {}}
 
     # --- Static web dashboard ------------------------------------------------
     if os.path.isdir(web_dir):
@@ -125,8 +221,8 @@ def make_app(*, pipeline, latest: LatestFrame, db, web_dir: str,
         index = os.path.join(web_app_dir, "index.html")
         if not os.path.exists(index):
             return HTMLResponse(
-                "<h1>AccessAI</h1><p>The mobile app files are missing at "
-                f"{web_app_dir}.</p>")
+                "<h1>AccessAI</h1><p>The mobile app files are missing "
+                "(web/app/). Check the server logs.</p>")
         return FileResponse(index)
 
     @app.get("/app/manifest.webmanifest")
@@ -151,7 +247,182 @@ def make_app(*, pipeline, latest: LatestFrame, db, web_dir: str,
     clients: set[WebSocket] = set()
     clients_lock = asyncio.Lock()
 
+    # --- Phase 17: push fan-out (docs/MOBILE_PUSH.md scaffolding) ------------
+    # Every "event" broadcast ALSO fans out to registered push tokens so a
+    # CLOSED app can be woken. Fire-and-forget in an executor - push must
+    # never delay or break the doorbell. Without ENABLE_PUSH + FCM creds the
+    # sender logs one hint per boot and does nothing.
+    push_enabled = bool(getattr(cfg, "ENABLE_PUSH", False))
+    _push_warned = {"done": False}
+
+    def _push_send_all(ev_dict: dict) -> None:
+        try:
+            tokens = db.push_tokens()
+        except Exception:
+            tokens = []
+        if not tokens:
+            return
+        if not push_enabled:
+            if not _push_warned["done"]:
+                _push_warned["done"] = True
+                print(f"[Push] {len(tokens)} device token(s) registered but "
+                      "ENABLE_PUSH is off - notifications are stored-only. "
+                      "See docs/MOBILE_PUSH.md to enable FCM delivery.")
+            return
+        creds = str(getattr(cfg, "FCM_CREDENTIALS_JSON", "") or "")
+        project = str(getattr(cfg, "FCM_PROJECT_ID", "") or "")
+        if not creds or not project:
+            if not _push_warned["done"]:
+                _push_warned["done"] = True
+                print("[Push] ENABLE_PUSH is on but FCM_PROJECT_ID / "
+                      "FCM_CREDENTIALS_JSON are unset - cannot deliver. "
+                      "See docs/MOBILE_PUSH.md prerequisites.")
+            return
+        # FCM HTTP v1 delivery. google-auth ships with the existing stack; if
+        # it is missing we degrade to a logged hint, never an exception.
+        try:
+            import google.auth.transport.requests as _gar
+            from google.oauth2 import service_account as _sa
+            import urllib.request as _rq
+            scoped = _sa.Credentials.from_service_account_file(
+                creds, scopes=["https://www.googleapis.com/auth/firebase.messaging"])
+            scoped.refresh(_gar.Request())
+            title = "AccessAI — " + {
+                "known": "Known visitor", "delivery": "Likely delivery",
+                "spoof": "Possible spoof", "unknown": "Visitor",
+            }.get(ev_dict.get("alert_kind", ""), "Visitor")
+            body = ev_dict.get("announcement_text") or "Someone is at the door."
+            for t in tokens:
+                msg = json.dumps({"message": {
+                    "token": t["token"],
+                    "notification": {"title": title, "body": body},
+                    "webpush": {"fcm_options": {"link": "/app"}},
+                }}).encode()
+                req = _rq.Request(
+                    f"https://fcm.googleapis.com/v1/projects/{project}/messages:send",
+                    data=msg, method="POST",
+                    headers={"Authorization": f"Bearer {scoped.token}",
+                             "Content-Type": "application/json"})
+                try:
+                    _rq.urlopen(req, timeout=8)
+                except Exception as e:
+                    print(f"[Push] send failed for ...{t['token'][-6:]}: {e}")
+        except ImportError:
+            if not _push_warned["done"]:
+                _push_warned["done"] = True
+                print("[Push] google-auth not installed; cannot mint an FCM "
+                      "OAuth token. pip install google-auth to enable.")
+        except Exception as e:                            # pragma: no cover
+            print(f"[Push] delivery error (continuing): {e}")
+
+    # --- Phase 17: smart-home alert webhook ----------------------------------
+    # Colour-coded room-light flashes for deaf users: every doorbell event
+    # POSTs {kind, color, name, announcement} to ALERT_WEBHOOK_URL (Home
+    # Assistant / Hue relay / anything). Fire-and-forget with a short timeout.
+    webhook_url = str(getattr(cfg, "ALERT_WEBHOOK_URL", "") or "")
+    webhook_colors = dict(getattr(cfg, "ALERT_WEBHOOK_COLORS", {}) or {})
+
+    def _webhook_send(ev_dict: dict) -> None:
+        if not webhook_url:
+            return
+        try:
+            import urllib.request as _rq
+            kind = ev_dict.get("alert_kind", "unknown")
+            body = json.dumps({
+                "kind": kind,
+                "color": webhook_colors.get(kind, "#2563eb"),
+                "name": (ev_dict.get("identity") or {}).get("name", "Unknown"),
+                "announcement": ev_dict.get("announcement_text", ""),
+            }).encode()
+            req = _rq.Request(webhook_url, data=body, method="POST",
+                              headers={"Content-Type": "application/json"})
+            _rq.urlopen(req, timeout=5)
+        except Exception as e:
+            print(f"[Webhook] alert POST failed (continuing): {e}")
+
+    # --- Phase 17: auto-greeting (opt-in) ------------------------------------
+    # When an UNKNOWN visitor (or unrecognised delivery) rings, the doorbell
+    # itself asks for name + purpose, listens for a few seconds, and attaches
+    # the transcript to the event - no manual "Hear Visitor" press. Known
+    # visitors and spoof warnings are never auto-interrogated. The spoken
+    # prompt announces the recording (consent-by-notice); the flag is off by
+    # default because it records a stranger's voice automatically.
+    auto_greet_on = bool(getattr(cfg, "ENABLE_AUTO_GREETING", False))
+    _greet_busy = threading.Lock()
+
+    def _auto_greet_worker(ev_dict: dict) -> None:
+        if not _greet_busy.acquire(blocking=False):
+            return                    # one interrogation at a time
+        try:
+            greeting = str(getattr(cfg, "AUTO_GREETING_TEXT", "") or "")
+            secs = int(getattr(cfg, "AUTO_GREETING_LISTEN_SECONDS", 6) or 6)
+            if access is not None and greeting:
+                access.speak_text(greeting)
+            # The greeting sits behind the announcement in the TTS queue; wait
+            # a rough estimate of both so the mic doesn't record our own voice.
+            est = 2.0 + 0.07 * (len(greeting)
+                                + len(ev_dict.get("announcement_text", "")))
+            time.sleep(min(est, 12.0))
+            audio = speech.record(secs)
+            if audio is None:
+                return
+            if speech.use_vad and not speech.has_speech(audio):
+                return                # silence - nothing to attach
+            text, lang = speech.transcribe(audio)
+            if not (text or "").strip():
+                return
+            translated = ""
+            tr = getattr(pipeline, "translate", None)
+            if tr is not None and getattr(pipeline, "translate_enabled", False):
+                target = getattr(tr, "user_language", "en")
+                if (lang or "") != target:
+                    out = tr.translate(text, src_lang=lang, target_lang=target)
+                    if out and out.strip() and out.strip() != text.strip():
+                        translated = out.strip()
+            event_id = ev_dict.get("event_id", "")
+            if event_id:
+                fields = {"speech_transcript": text, "language_detected": lang}
+                if translated:
+                    fields["translated_transcript"] = translated
+                db.update_event_fields(event_id, **fields)
+            broadcast_threadsafe({"type": "visitor_speech", "text": text,
+                                  "translated": translated, "language": lang,
+                                  "event_id": event_id, "auto": True})
+            # Read the visitor's answer back to a blind user.
+            if access is not None and getattr(access, "mode", "both") in (
+                    "blind", "both"):
+                say = translated or text
+                access.speak_text(f'They said: "{say}"')
+        except Exception as e:                            # pragma: no cover
+            print(f"[AutoGreet] failed (continuing): {e}")
+        finally:
+            _greet_busy.release()
+
+    def _maybe_auto_greet(ev_dict: dict) -> None:
+        if not auto_greet_on or speech is None or not speech.available():
+            return
+        if ev_dict.get("trigger") not in ("doorbell", "ring", "motion"):
+            return
+        if ev_dict.get("alert_kind") not in ("unknown", "delivery"):
+            return
+        if int(ev_dict.get("visitor_count", 0) or 0) < 1:
+            return                    # empty frame - nobody to interrogate
+        threading.Thread(target=_auto_greet_worker, args=(ev_dict,),
+                         daemon=True, name="auto-greet").start()
+
     async def broadcast(payload: dict) -> None:
+        # Doorbell events additionally fan out to push devices (app closed),
+        # the smart-home webhook (room lights), and - when enabled - the
+        # auto-greeting interrogation. All fire-and-forget.
+        if payload.get("type") == "event" and isinstance(
+                payload.get("event"), dict):
+            try:
+                loop = asyncio.get_running_loop()
+                loop.run_in_executor(None, _push_send_all, payload["event"])
+                loop.run_in_executor(None, _webhook_send, payload["event"])
+                _maybe_auto_greet(payload["event"])
+            except Exception:                             # pragma: no cover
+                pass
         async with clients_lock:
             dead = []
             for ws in clients:
@@ -184,6 +455,17 @@ def make_app(*, pipeline, latest: LatestFrame, db, web_dir: str,
 
     app.state.broadcast_threadsafe = broadcast_threadsafe
 
+    def _suppress_motion() -> None:
+        """After a doorbell/manual trigger, hold the motion detector's cooldown
+        so the same visitor isn't immediately re-announced by motion.
+        run.py sets app.state.motion when ENABLE_MOTION is on; None otherwise."""
+        m = getattr(app.state, "motion", None)
+        if m is not None:
+            try:
+                m.suppress()
+            except Exception:                             # pragma: no cover
+                pass
+
     # --- Routes --------------------------------------------------------------
     @app.get("/", response_class=HTMLResponse)
     async def root():
@@ -191,7 +473,7 @@ def make_app(*, pipeline, latest: LatestFrame, db, web_dir: str,
         if not os.path.exists(index):
             return HTMLResponse(
                 "<h1>AccessAI</h1><p>Server is running, but the dashboard files "
-                f"are missing at {web_dir}.</p>"
+                "are missing (web/). Check the server logs.</p>"
             )
         return FileResponse(index)
 
@@ -230,13 +512,16 @@ def make_app(*, pipeline, latest: LatestFrame, db, web_dir: str,
         ev = await loop.run_in_executor(
             None, lambda: pipeline.run_once(frame, trigger="doorbell")
         )
+        _suppress_motion()
         payload = {"type": "event", "event": _jsonify(ev.to_dict())}
         await broadcast(payload)
         return JSONResponse(payload["event"])
 
     @app.get("/history")
-    def history(limit: int = 50):
-        return JSONResponse(db.recent_events(limit=limit))
+    def history(limit: int = 50, q: str = ""):
+        """Stored events, newest first. `q` searches name / intent /
+        announcement / transcript / scene / OCR / date (Objective 7)."""
+        return JSONResponse(db.recent_events(limit=limit, q=q))
 
     @app.get("/event/{event_id}")
     def event(event_id: str):
@@ -575,25 +860,113 @@ def make_app(*, pipeline, latest: LatestFrame, db, web_dir: str,
         await broadcast({"type": "suggestions_update"})
         return {"ok": bool(ok)}
 
+    # --- Phase 17: live captions (rolling transcription for deaf users) ------
+    # POST /captions/on starts a loop: record a short chunk -> transcribe ->
+    # translate -> broadcast {"type": "caption", ...} -> repeat, until
+    # /captions/off or an idle timeout. Extends the one-shot /hear_visitor
+    # into a real conversation view. Explicitly user-started, like Hear
+    # Visitor - never automatic.
+    _captions = {"on": False, "thread": None}
+    _CAPTION_CHUNK_SECONDS = 4
+    _CAPTION_MAX_SECONDS = 180        # hard stop: captions can't run forever
+
+    def _caption_loop() -> None:
+        started = time.monotonic()
+        silent_chunks = 0
+        while _captions["on"]:
+            if time.monotonic() - started > _CAPTION_MAX_SECONDS:
+                print("[Captions] max session length reached; stopping.")
+                break
+            try:
+                audio = speech.record(_CAPTION_CHUNK_SECONDS)
+                if audio is None:
+                    break             # mic gone - end the session
+                if speech.use_vad and not speech.has_speech(audio):
+                    silent_chunks += 1
+                    if silent_chunks >= 8:        # ~30s of silence -> stop
+                        print("[Captions] long silence; stopping.")
+                        break
+                    continue
+                silent_chunks = 0
+                text, lang = speech.transcribe(audio)
+                if not (text or "").strip():
+                    continue
+                translated = ""
+                tr = getattr(pipeline, "translate", None)
+                if tr is not None and getattr(pipeline, "translate_enabled",
+                                              False):
+                    target = getattr(tr, "user_language", "en")
+                    if (lang or "") != target:
+                        out = tr.translate(text, src_lang=lang,
+                                           target_lang=target)
+                        if out and out.strip() and out.strip() != text.strip():
+                            translated = out.strip()
+                broadcast_threadsafe({"type": "caption", "text": text,
+                                      "translated": translated,
+                                      "language": lang})
+            except Exception as e:                        # pragma: no cover
+                print(f"[Captions] loop error (continuing): {e}")
+        _captions["on"] = False
+        broadcast_threadsafe({"type": "caption_state", "on": False})
+
+    @app.post("/captions/{action}")
+    async def captions_toggle(action: str):
+        """Start/stop the live caption stream ("on"/"off"). Deaf-mode two-way
+        conversations: chunked transcripts arrive as "caption" WS messages."""
+        if action not in ("on", "off"):
+            raise HTTPException(400, "action must be 'on' or 'off'")
+        if action == "off":
+            _captions["on"] = False
+            return {"ok": True, "on": False}
+        if speech is None or not speech.available():
+            raise HTTPException(
+                503, "Speech recognition is not available for captions.")
+        if _captions["on"]:
+            return {"ok": True, "on": True}
+        _captions["on"] = True
+        t = threading.Thread(target=_caption_loop, daemon=True,
+                             name="caption-loop")
+        _captions["thread"] = t
+        t.start()
+        await broadcast({"type": "caption_state", "on": True})
+        return {"ok": True, "on": True,
+                "chunk_seconds": _CAPTION_CHUNK_SECONDS,
+                "max_seconds": _CAPTION_MAX_SECONDS}
+
+    @app.get("/captions_status")
+    def captions_status():
+        return {"on": bool(_captions["on"])}
+
+    @app.get("/quick_replies")
+    def quick_replies():
+        """Phase 17: canned one-tap reply sentences (config.QUICK_REPLIES).
+        Clients render them as buttons beside the free-text reply box."""
+        return {"replies": list(getattr(cfg, "QUICK_REPLIES", []) or [])}
+
     @app.post("/reply")
     async def reply(payload: dict = Body(...)):
-        """Two-way reply: speak a typed message at the door (Phase 4)."""
+        """Two-way reply: speak a typed message at the door (Phase 4).
+
+        `lang` (optional, Phase 17): ISO code of the typed text - a deaf user
+        replying in Malayalam gets a Malayalam voice at the door."""
         text = (payload.get("text") or "").strip()
+        lang = str(payload.get("lang") or "").strip().lower()
         if not text:
             raise HTTPException(400, "text is required")
         spoken = False
         if access is not None:
-            spoken = bool(access.speak_text(text))
+            spoken = bool(access.speak_text(text, lang=lang))
         elif tts is not None:
-            spoken = bool(tts.speak(text))
+            spoken = bool(tts.speak(text, lang=lang))
         engine = tts.engine_name() if tts is not None else "none"
         return {"ok": True, "spoken": spoken, "engine": engine, "text": text}
 
     # --- Phase 14: phone-side speech + text/voice commands (mobile app) -------
     @app.get("/speak_audio")
-    async def speak_audio(text: str = ""):
+    async def speak_audio(text: str = "", lang: str = ""):
         """Synthesize `text` with the natural Kokoro voice and return WAV bytes for
         the PHONE to play (mobile Blind-mode speech). Does NOT speak on the server.
+        `lang` (Phase 17): ISO hint routing non-English text to a matching voice.
         Clean-JSON 503 when no synth backend is available -> the app falls back to
         the browser Web Speech API. Runs synthesis OFF the announcement worker."""
         text = (text or "").strip()
@@ -603,7 +976,7 @@ def make_app(*, pipeline, latest: LatestFrame, db, web_dir: str,
             raise HTTPException(503, "TTS synthesis is not available.")
         loop = asyncio.get_event_loop()
         wav, _sr = await loop.run_in_executor(
-            None, lambda: tts.synth_wav_bytes(text))
+            None, lambda: tts.synth_wav_bytes(text, lang=lang))
         if not wav:
             raise HTTPException(
                 503, "Could not synthesize audio; use the browser voice fallback.")
@@ -664,20 +1037,50 @@ def make_app(*, pipeline, latest: LatestFrame, db, web_dir: str,
                          "answer": answer, "text": question})
         return {"question": question, "answer": answer}
 
+    def _effective_mode(device: str | None) -> str:
+        """The mode a given device should use: its own override if set, else the
+        household default. `device` is an opaque client-chosen id (e.g. a phone)."""
+        if device:
+            ov = state["device_modes"].get(device)
+            if ov in _VALID_MODES:
+                return ov
+        return state["mode"]
+
     @app.get("/mode")
-    def get_mode():
-        return {"mode": state["mode"]}
+    def get_mode(device: str | None = None):
+        # A device with an override gets it; the response says which applied so a
+        # client can show "following household default" vs "this device: Deaf".
+        eff = _effective_mode(device)
+        return {"mode": eff, "default_mode": state["mode"],
+                "device": device,
+                "device_override": (device is not None
+                                    and device in state["device_modes"])}
 
     @app.post("/mode")
     async def set_mode(payload: dict = Body(...)):
         m = payload.get("mode")
         if m not in _VALID_MODES:
             raise HTTPException(400, "mode must be blind|deaf|both")
+        device = (payload.get("device") or "").strip()
+        if device:
+            # Per-device override — does NOT touch the household default or the
+            # shared accessibility engine (which drives the door-side speaker).
+            state["device_modes"][device] = m
+            return {"mode": m, "device": device, "device_override": True,
+                    "default_mode": state["mode"]}
         state["mode"] = m
         # Drive the accessibility engine so speaking actually toggles live.
         if access is not None:
             access.set_mode(m)
-        return {"mode": m}
+        return {"mode": m, "device_override": False, "default_mode": m}
+
+    @app.delete("/mode")
+    async def clear_device_mode(device: str | None = None):
+        """Drop a device's override so it follows the household default again."""
+        if device:
+            state["device_modes"].pop(device, None)
+        return {"mode": state["mode"], "device": device,
+                "device_override": False, "default_mode": state["mode"]}
 
     # --- Phase 11: natural voice picker -------------------------------------
     @app.get("/voices")
@@ -864,6 +1267,40 @@ def make_app(*, pipeline, latest: LatestFrame, db, web_dir: str,
         ok | placeholder | unavailable | off, so the UI can colour it."""
         return JSONResponse(_collect_status())
 
+    # --- Phase 17: push-token registry (docs/MOBILE_PUSH.md) -----------------
+    @app.post("/register_push")
+    async def register_push(request: Request):
+        """Store a device push token: {"token": "...", "platform"?, "mode"?}.
+
+        Additive scaffolding - tokens are remembered even while ENABLE_PUSH is
+        off, so enabling FCM later requires no client re-registration."""
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(400, "JSON body required")
+        token = str((body or {}).get("token", "")).strip()
+        if not token or len(token) > 4096:
+            raise HTTPException(400, "a non-empty 'token' is required")
+        platform = str(body.get("platform", "web"))[:16]
+        dev_mode = str(body.get("mode", "both"))[:16]
+        created = db.push_register(token, platform=platform, mode=dev_mode)
+        return {"ok": True, "created": bool(created),
+                "delivery_enabled": push_enabled,
+                "registered": len(db.push_tokens())}
+
+    @app.post("/unregister_push")
+    async def unregister_push(request: Request):
+        """Remove a device push token: {"token": "..."}."""
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(400, "JSON body required")
+        token = str((body or {}).get("token", "")).strip()
+        if not token:
+            raise HTTPException(400, "a non-empty 'token' is required")
+        removed = db.push_unregister(token)
+        return {"ok": True, "removed": bool(removed)}
+
     # --- Phase 10: hardware doorbell webhook (ESP32-CAM readiness) -----------
     @app.post("/ring")
     async def ring(request: Request):
@@ -872,13 +1309,29 @@ def make_app(*, pipeline, latest: LatestFrame, db, web_dir: str,
         Optionally accepts a raw JPEG body (the device's own capture); otherwise
         it uses the latest frame from the configured camera, or a blank frame if
         headless. Identical downstream path to /trigger, so it drives the exact
-        same event pipeline + dashboard broadcast."""
-        frame = None
-        source = "latest-frame"
+        same event pipeline + dashboard broadcast.
+
+        Auth (Phase 17): when RING_HMAC_SECRET is set, the request must carry
+        X-Ring-Signature: hex(HMAC_SHA256(secret, raw body)) - the ESP32 signs
+        with the shared secret and never holds the user's bearer token. A valid
+        bearer token is accepted as an alternative (for manual testing)."""
         try:
             body = await request.body()
         except Exception:
             body = b""
+        if ring_secret:
+            sig = request.headers.get("x-ring-signature", "")
+            want = _hmac.new(ring_secret.encode(), body,
+                             hashlib.sha256).hexdigest()
+            sig_ok = bool(sig) and _hmac.compare_digest(sig.lower(), want)
+            # The bearer-token alternative only exists when a token is actually
+            # CONFIGURED - _token_ok() is vacuously true with auth disabled,
+            # and that must not neutralise the ring signature requirement.
+            token_ok = bool(auth_token) and _token_ok(request)
+            if not sig_ok and not token_ok:
+                raise HTTPException(401, "invalid ring signature")
+        frame = None
+        source = "latest-frame"
         if body:
             try:
                 arr = np.frombuffer(body, dtype=np.uint8)
@@ -897,6 +1350,7 @@ def make_app(*, pipeline, latest: LatestFrame, db, web_dir: str,
         loop = asyncio.get_event_loop()
         ev = await loop.run_in_executor(
             None, lambda: pipeline.run_once(frame, trigger="ring"))
+        _suppress_motion()
         payload = {"type": "event", "event": _jsonify(ev.to_dict())}
         await broadcast(payload)
         return JSONResponse({"ok": True, "frame_source": source,
@@ -1003,10 +1457,22 @@ def make_app(*, pipeline, latest: LatestFrame, db, web_dir: str,
         modules.append(_mod(
             "wakeword", ww_enabled,
             wakeword is not None and _safe(wakeword.available, False),
-            placeholder=True,   # pretrained phrase, not a trained "Hey Access"
+            # placeholder while on a pretrained phrase; a trained hey_access
+            # model (scripts/train_wakeword.py) flips this to a real module.
+            placeholder=(wakeword is None
+                         or _safe(wakeword.is_placeholder, True)),
             detail=(f"{wakeword.model_name} "
                     f"({'running' if wakeword and wakeword.running() else 'idle'})"
                     if wakeword else "openWakeWord not built")))
+
+        motion = getattr(app.state, "motion", None)
+        modules.append(_mod(
+            "motion", bool(getattr(cfg, "ENABLE_MOTION", False)) if cfg
+            else (motion is not None),
+            motion is not None and _safe(motion.available, False),
+            detail=(f"absdiff ({'running' if motion and motion.running() else 'idle'}, "
+                    f"{motion.status()['fires']} fires)"
+                    if motion else "software motion trigger")))
 
         flags = {}
         if cfg is not None:
@@ -1039,6 +1505,17 @@ def make_app(*, pipeline, latest: LatestFrame, db, web_dir: str,
 
     @app.websocket("/events")
     async def ws_events(ws: WebSocket):
+        # Phase 17: the HTTP middleware doesn't see WebSocket upgrades, so the
+        # token is checked here. Browsers can't set headers on a WebSocket, so
+        # the query form (?token=) is the expected transport.
+        if auth_token:
+            supplied = ws.query_params.get("token", "")
+            hdr = ws.headers.get("authorization", "")
+            if hdr.lower().startswith("bearer "):
+                supplied = supplied or hdr[7:]
+            if not _secrets.compare_digest(supplied, auth_token):
+                await ws.close(code=4401)
+                return
         await ws.accept()
         async with clients_lock:
             clients.add(ws)

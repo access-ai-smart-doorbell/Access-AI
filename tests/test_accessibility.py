@@ -144,3 +144,45 @@ def test_known_in_group_with_scene_is_named():
     ))
     assert text.startswith("Alice is at the door with 2 other people.")
     assert "Three people appear to be standing near the gate." in text
+
+
+# --------------------------------------------------------------------------
+# alert_kind (Phase 17) - the per-event alert taxonomy every client keys on
+# --------------------------------------------------------------------------
+from accessai.visitor_event import alert_kind, ALERT_KINDS, Person
+
+
+def test_alert_kind_priority_spoof_wins():
+    ev = _ev(identity=Identity(known=True, name="Rahul"),
+             is_spoof=True, intent="likely delivery")
+    assert alert_kind(ev) == "spoof"
+
+
+def test_alert_kind_known_beats_delivery():
+    ev = _ev(identity=Identity(known=True, name="Rahul"),
+             intent="likely delivery")
+    assert alert_kind(ev) == "known"
+
+
+def test_alert_kind_person_level_known():
+    ev = _ev(people=[Person(known=False), Person(known=True, name="Priya")])
+    assert alert_kind(ev) == "known"
+
+
+def test_alert_kind_delivery_then_unknown():
+    ev = _ev(intent="likely delivery")
+    assert alert_kind(ev) == "delivery"
+    ev.intent = "unknown visitor"
+    assert alert_kind(ev) == "unknown"
+
+
+def test_alert_kind_dict_form_matches_dataclass():
+    ev = _ev(identity=Identity(known=True, name="Rahul"))
+    assert alert_kind(ev.to_dict()) == alert_kind(ev) == "known"
+    assert ev.to_dict()["alert_kind"] == "known"
+
+
+def test_alert_kind_always_in_taxonomy():
+    for ev in (_ev(identity=Identity(known=True, name="A")),
+               _ev(intent="likely delivery"), _ev()):
+        assert alert_kind(ev) in ALERT_KINDS

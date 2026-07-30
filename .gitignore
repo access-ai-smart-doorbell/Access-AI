@@ -27,6 +27,15 @@ data/history/*
 .insightface/
 ~/.insightface/
 
+# Wake-word training cache (synthesized WAVs; regenerate with scripts/train_wakeword.py)
+models/wakeword/_train_cache/
+
+# Ultralytics' own settings/cache dir (created next to the CWD on first YOLO use)
+Ultralytics/
+
+# Pytest cache
+.pytest_cache/
+
 # Archived pre-restart build (local only)
 _archive/
 

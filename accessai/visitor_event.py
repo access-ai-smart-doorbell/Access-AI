@@ -127,8 +127,44 @@ class VisitorEvent:
     snapshot_path: str = ""
 
     def to_dict(self) -> dict:
-        """Plain-dict view for JSON / DB. Nested dataclasses become dicts."""
-        return asdict(self)
+        """Plain-dict view for JSON / DB. Nested dataclasses become dicts.
+        Includes the derived `alert_kind` so every consumer (dashboard, PWA,
+        Flutter, webhooks) keys channel treatment off one field."""
+        d = asdict(self)
+        d["alert_kind"] = alert_kind(self)
+        return d
+
+
+# Alert taxonomy: every event classifies into exactly one kind, most-urgent
+# first. Clients key channel treatments off this single string - haptic
+# patterns, earcons, notification urgency, smart-bulb colours - so blind, deaf,
+# and deafblind users can tell WHO rang without reading or hearing a sentence.
+ALERT_KINDS = ("spoof", "known", "delivery", "unknown")
+
+
+def alert_kind(ev) -> str:
+    """Classify a VisitorEvent (or its dict form) into one ALERT_KINDS bucket.
+
+    Pure + tolerant of both live dataclasses and DB-rebuilt dicts, mirroring
+    people_to_dicts(). Priority: spoof beats everything (it is a warning, not
+    a visit); a recognised person beats intent; a delivery beats a generic
+    unknown."""
+    get = (lambda k, d=None: ev.get(k, d)) if isinstance(ev, dict) else \
+        (lambda k, d=None: getattr(ev, k, d))
+    if bool(get("is_spoof", False)):
+        return "spoof"
+    ident = get("identity", None)
+    known = ident.get("known") if isinstance(ident, dict) else \
+        getattr(ident, "known", False)
+    people = get("people", None) or []
+    any_known = bool(known) or any(
+        (p.get("known") if isinstance(p, dict) else getattr(p, "known", False))
+        for p in people)
+    if any_known:
+        return "known"
+    if "delivery" in str(get("intent", "") or ""):
+        return "delivery"
+    return "unknown"
 
 
 def people_to_dicts(people) -> list:
