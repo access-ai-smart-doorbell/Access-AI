@@ -79,7 +79,7 @@
         <button id="test-voice-btn" class="voice-btn" style="margin-top:8px;">🔊 Test voice</button>
         <label class="wake-toggle" title="Always-listening is opt-in: it keeps the mic open (CPU + privacy).">
           <input type="checkbox" id="wake-toggle" />
-          <span>Always listening (“<span id="wake-word">hey jarvis</span>”)</span>
+          <span>Always listening (“<span id="wake-word">hey access</span>”)</span>
         </label>
         <p id="voice-note" class="muted small"></p>
         <p class="muted small">Try: “who is at the door”, “recent visitors”,
@@ -101,7 +101,21 @@
           <input id="reply-text" type="text" placeholder="Type a reply…" />
           <button id="reply-btn">Send</button>
         </div>
+        <!-- Phase 17: canned one-tap replies (from /quick_replies). -->
+        <div id="quick-replies" class="quick-replies" role="group"
+             aria-label="Quick replies"></div>
         <p id="reply-note" class="muted small"></p>
+      </div>
+
+      <div class="reply-box">
+        <h3>Live captions <span class="muted">(Deaf Mode)</span></h3>
+        <p class="muted small">Rolling transcription of whoever is speaking at
+          the door — captions appear below and are read aloud by your screen
+          reader.</p>
+        <div class="reply-row">
+          <button id="captions-btn" aria-pressed="false">▶ Start captions</button>
+        </div>
+        <div id="captions-log" class="captions-log" aria-live="polite"></div>
       </div>
 
       <div class="reply-box">
@@ -147,6 +161,11 @@
           <button id="refresh" class="ghost">Refresh</button>
           <button id="clear-history" class="ghost danger">Clear all</button>
         </div>
+      </div>
+      <div class="hist-search">
+        <input id="history-search" type="search"
+               placeholder="Search name, intent, words said, or date (2026-07-19)…"
+               aria-label="Search visitor history" autocomplete="off" />
       </div>
       <ul id="history-list" class="history-list"></ul>
     </section>

@@ -2,6 +2,41 @@
 // Subscribes to /events, renders the current event + history, and drives the
 // Ring / Mode / Reply / Refresh controls.
 
+/* --- Phase 17: bearer-token auth ----------------------------------------
+ * When the server has ACCESSAI_TOKEN set, every API call must carry it. The
+ * token lives in localStorage; a 401 prompts once and retries. fetch() is
+ * wrapped globally so the ~40 existing call sites need no changes; the MJPEG
+ * <img> and the WebSocket (no headers possible) get ?token= appended. */
+const TOKEN_KEY = "accessai.token";
+let authToken = localStorage.getItem(TOKEN_KEY) || "";
+
+function tokenQS(url) {
+  if (!authToken) return url;
+  return url + (url.includes("?") ? "&" : "?") +
+    "token=" + encodeURIComponent(authToken);
+}
+
+const _rawFetch = window.fetch.bind(window);
+window.fetch = async (url, opts = {}) => {
+  if (authToken && typeof url === "string" && url.startsWith("/")) {
+    opts = { ...opts, headers: { ...(opts.headers || {}),
+                                 "Authorization": `Bearer ${authToken}` } };
+  }
+  const r = await _rawFetch(url, opts);
+  if (r.status === 401 && typeof url === "string" && url.startsWith("/")) {
+    const t = window.prompt(
+      "This AccessAI server requires an access token (ACCESSAI_TOKEN in its .env).\nEnter the token:");
+    if (t && t.trim()) {
+      authToken = t.trim();
+      localStorage.setItem(TOKEN_KEY, authToken);
+      const vid = document.getElementById("video");
+      if (vid) vid.src = tokenQS("/video");
+      return window.fetch(url, opts);  // retry once with the new token
+    }
+  }
+  return r;
+};
+
 const el = (id) => document.getElementById(id);
 let currentMode = "both";   // kept in sync with the server via /mode
 let userLanguage = "en";    // Phase 8: target language, synced via /translate_status
@@ -226,23 +261,133 @@ function renderEvent(ev) {
     <div class="announcement">${ev.announcement_text || ""}</div>
   `;
 
-  deafAlert();   // Deaf/both: flash + vibrate on each new event
+  deafAlert(ev);   // Deaf/both: per-kind flash + vibrate, escalates until ack
 }
 
 // Deaf Mode (and "both"): the visitor can't hear the spoken announcement, so
-// draw attention visually - briefly flash the card and buzz the device.
+// draw attention visually - flash + vibrate, ESCALATING until acknowledged.
 function applyMode(mode) {
   currentMode = mode;
   const visual = mode === "deaf" || mode === "both";
   document.body.classList.toggle("deaf", visual);   // drives big-text CSS
 }
 
-function deafAlert() {
+/* --- Phase 17: per-kind alert channels + escalation until acknowledged ----
+ * One alert_kind string (from the server) keys every channel so a deaf or
+ * deafblind user can classify the visitor without reading:
+ *   vibration patterns  - distinct rhythm per kind (spoof = long SOS-ish)
+ *   flash               - animated card flash, or a persistent high-contrast
+ *                         banner under prefers-reduced-motion (the animated
+ *                         flash is disabled there, but the alert channel must
+ *                         survive - a static banner isn't motion)
+ *   OS notification     - when the tab is hidden (Notification API)
+ * The alert repeats every 6s until the user acknowledges by clicking/keying
+ * anywhere or focusing the tab, so one missed flash isn't a missed visitor. */
+const VIBRATIONS = {
+  known:    [150, 80, 300],                        // short-long "ta-da"
+  delivery: [120, 90, 120, 90, 120],               // three even taps
+  unknown:  [400],                                 // one plain buzz
+  spoof:    [600, 200, 600, 200, 600],             // three long - warning
+};
+const KIND_LABEL = {
+  known: "Known visitor", delivery: "Likely delivery",
+  unknown: "Unknown visitor", spoof: "⚠ Possible spoof (photo shown)",
+};
+const REDUCED_MOTION =
+  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+let escalateTimer = null;
+let escalateCount = 0;
+
+function alertKindOf(ev) {
+  return ev.alert_kind ||
+    (ev.is_spoof ? "spoof"
+     : (ev.identity && ev.identity.known) ? "known"
+     : /delivery/.test(ev.intent || "") ? "delivery" : "unknown");
+}
+
+function deafAlert(ev) {
   if (currentMode !== "deaf" && currentMode !== "both") return;
-  currentEl.classList.remove("flash");
-  void currentEl.offsetWidth;              // reflow so the animation restarts
-  currentEl.classList.add("flash");
-  if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+  const kind = alertKindOf(ev || {});
+  fireAlertOnce(kind, ev);
+  // Escalate: re-flash + re-buzz every 6s (max 5 rounds) until acknowledged.
+  stopEscalation();
+  escalateCount = 0;
+  escalateTimer = setInterval(() => {
+    if (++escalateCount >= 5) { stopEscalation(); return; }
+    fireAlertOnce(kind, ev);
+  }, 6000);
+}
+
+function fireAlertOnce(kind, ev) {
+  if (REDUCED_MOTION) {
+    // Non-animated fallback: a persistent inverted banner (appears instantly,
+    // no motion) instead of the flash animation the media query disables.
+    showAlertBanner(kind, ev);
+  } else {
+    currentEl.classList.remove("flash");
+    void currentEl.offsetWidth;            // reflow so the animation restarts
+    currentEl.classList.add("flash");
+    showAlertBanner(kind, ev);             // banner doubles as the ack surface
+  }
+  if (navigator.vibrate) {
+    try { navigator.vibrate(VIBRATIONS[kind] || VIBRATIONS.unknown); } catch {}
+  }
+  notifyIfHidden(kind, ev);
+}
+
+function showAlertBanner(kind, ev) {
+  let b = el("alert-banner");
+  if (!b) {
+    b = document.createElement("div");
+    b.id = "alert-banner";
+    b.setAttribute("role", "alert");
+    b.addEventListener("click", ackAlert);
+    document.body.appendChild(b);
+  }
+  b.dataset.kind = kind;
+  b.innerHTML = `<span class="ab-kind">${KIND_LABEL[kind] || kind}</span>
+    <span class="ab-text">${(ev && ev.announcement_text) || "Someone is at the door."}</span>
+    <button class="ab-ok" aria-label="Acknowledge alert">OK</button>`;
+  b.hidden = false;
+}
+
+function ackAlert() {
+  stopEscalation();
+  const b = el("alert-banner");
+  if (b) b.hidden = true;
+}
+
+function stopEscalation() {
+  if (escalateTimer) { clearInterval(escalateTimer); escalateTimer = null; }
+}
+
+// Any interaction or returning to the tab acknowledges the alert.
+["click", "keydown"].forEach((evName) =>
+  document.addEventListener(evName, () => { if (escalateTimer) ackAlert(); }));
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && escalateTimer) ackAlert();
+});
+
+/* OS notification when the dashboard tab is hidden - the doorbell must reach
+ * a user who is in another tab. Permission is requested lazily on the first
+ * hidden-tab alert (browsers require a prior user gesture for auto-grant, so
+ * the earlier Ring/mode clicks usually satisfy it). */
+function notifyIfHidden(kind, ev) {
+  if (!document.hidden || !("Notification" in window)) return;
+  const fire = () => {
+    try {
+      const n = new Notification(`AccessAI — ${KIND_LABEL[kind] || kind}`, {
+        body: (ev && ev.announcement_text) || "Someone is at the door.",
+        tag: "accessai-doorbell",       // replaces, never stacks
+        requireInteraction: kind === "spoof",
+      });
+      n.onclick = () => { window.focus(); ackAlert(); n.close(); };
+    } catch {}
+  };
+  if (Notification.permission === "granted") fire();
+  else if (Notification.permission !== "denied") {
+    Notification.requestPermission().then((p) => { if (p === "granted") fire(); });
+  }
 }
 
 function fmtTime(ts) {
@@ -252,9 +397,16 @@ function fmtTime(ts) {
 
 async function refreshHistory() {
   try {
-    const r = await fetch("/history?limit=30");
+    const q = (el("history-search")?.value || "").trim();
+    const url = "/history?limit=30" + (q ? `&q=${encodeURIComponent(q)}` : "");
+    const r = await fetch(url);
     const rows = await r.json();
     historyList.innerHTML = "";
+    if (q && rows.length === 0) {
+      historyList.innerHTML =
+        `<li class="h-empty">No visits match “${q.replace(/</g, "&lt;")}”.</li>`;
+      return;
+    }
     for (const ev of rows) {
       const li = document.createElement("li");
       const img = `<img src="/snapshot/${ev.event_id}" alt="snapshot" onerror="this.style.visibility='hidden'">`;
@@ -383,8 +535,9 @@ async function hearVisitor() {
   }
 }
 
-async function reply() {
-  const text = replyInput.value.trim();
+// Optional `preset` sends a canned quick-reply without touching the input.
+async function reply(preset) {
+  const text = (preset != null ? preset : replyInput.value).trim();
   if (!text) return;
   replyNote.textContent = "Sending…";
   try {
@@ -398,7 +551,7 @@ async function reply() {
       replyNote.textContent = j.spoken
         ? "🔊 Spoken at the door."
         : `TTS unavailable (${j.engine || "none"}) — reply shown as text only.`;
-      replyInput.value = "";
+      if (preset == null) replyInput.value = "";
     } else {
       replyNote.textContent = j.detail || "Reply failed: " + r.status;
     }
@@ -406,6 +559,63 @@ async function reply() {
     replyNote.textContent = "Reply error: " + e;
   }
 }
+
+// Phase 17: canned quick replies — one-tap sentences for a deaf user in a hurry.
+async function loadQuickReplies() {
+  const box = el("quick-replies");
+  if (!box) return;
+  try {
+    const r = await fetch("/quick_replies");
+    if (!r.ok) return;
+    const j = await r.json();
+    box.innerHTML = "";
+    for (const text of (j.replies || [])) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "chip-reply";
+      b.textContent = text;
+      b.addEventListener("click", () => reply(text));
+      box.appendChild(b);
+    }
+  } catch {}
+}
+
+// Phase 17: live captions — toggle the server loop and stream lines in.
+const captionsBtn = el("captions-btn");
+const captionsLog = el("captions-log");
+function setCaptionsUi(on) {
+  if (!captionsBtn) return;
+  captionsBtn.setAttribute("aria-pressed", on ? "true" : "false");
+  captionsBtn.textContent = on ? "■ Stop captions" : "▶ Start captions";
+  captionsBtn.classList.toggle("active", on);
+}
+function appendCaption(msg) {
+  if (!captionsLog) return;
+  const said = (msg.text || "").trim();
+  if (!said) return;
+  const line = document.createElement("div");
+  line.className = "caption-line";
+  line.textContent = msg.translated ? `${said} → ${msg.translated}` : said;
+  captionsLog.appendChild(line);
+  while (captionsLog.childElementCount > 12) {
+    captionsLog.removeChild(captionsLog.firstChild);
+  }
+  captionsLog.scrollTop = captionsLog.scrollHeight;
+}
+async function toggleCaptions() {
+  const on = captionsBtn.getAttribute("aria-pressed") === "true";
+  const action = on ? "off" : "on";
+  try {
+    const r = await fetch(`/captions/${action}`, { method: "POST" });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok) setCaptionsUi(!!j.on);
+    else replyNote.textContent = j.detail || `Captions failed: ${r.status}`;
+  } catch (e) {
+    replyNote.textContent = "Captions error: " + e;
+  }
+}
+if (captionsBtn) captionsBtn.addEventListener("click", toggleCaptions);
+loadQuickReplies();
 
 // Small HTML escaper for user-supplied names rendered into markup (Phase 13).
 function esc(s) {
@@ -791,13 +1001,14 @@ async function refreshWakeStatus() {
   try {
     const r = await fetch("/wakeword_status");
     const j = await r.json();
-    if (word && j.model && j.model !== "none") word.textContent = j.model;
+    if (word && j.model && j.model !== "none") word.textContent = j.model.replace(/_/g, " ");
     if (toggle) toggle.checked = !!j.running;
     if (!pill) return;
     if (j.available) {
       pill.textContent = j.running ? "voice ✓ listening" : "voice ✓ push-to-talk";
       pill.className = "status online";
-      pill.title = `Wake word '${j.model}' available (placeholder phrase).${
+      pill.title = `Wake word '${j.model}' available${
+        j.placeholder ? " (placeholder phrase)" : " (custom model)"}.${
         j.running ? " Always-on mic is ON." : " Always-on is off (opt-in)."}`;
     } else {
       pill.textContent = "voice (push-to-talk)";
@@ -960,7 +1171,7 @@ async function setMode(v) {
 
 function connectWS() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  const ws = new WebSocket(`${proto}://${location.host}/events`);
+  const ws = new WebSocket(tokenQS(`${proto}://${location.host}/events`));
   ws.onopen = () => setStatus(true);
   ws.onclose = () => { setStatus(false); setTimeout(connectWS, 2000); };
   ws.onerror = () => setStatus(false);
@@ -996,6 +1207,10 @@ function connectWS() {
       } else if (msg.type === "voice") {
         renderVoice(msg);          // Phase 10: a wake-word command was handled
         refreshHistory();          // who_is_there/analyze create an event
+      } else if (msg.type === "caption") {
+        appendCaption(msg);        // Phase 17: rolling live-caption line
+      } else if (msg.type === "caption_state") {
+        setCaptionsUi(!!msg.on);   // loop started/stopped (maybe by a timeout)
       }
     } catch {}
   };
@@ -1008,6 +1223,18 @@ replyBtn.addEventListener("click", reply);
 refreshBtn.addEventListener("click", refreshHistory);
 const clearHistBtn = el("clear-history");
 if (clearHistBtn) clearHistBtn.addEventListener("click", clearHistory);
+// History search: debounced live filter (server-side ?q=).
+const histSearch = el("history-search");
+if (histSearch) {
+  let searchTimer = null;
+  histSearch.addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(refreshHistory, 250);
+  });
+  histSearch.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { clearTimeout(searchTimer); refreshHistory(); }
+  });
+}
 modeSel.addEventListener("change", (e) => setMode(e.target.value));
 replyInput.addEventListener("keydown", (e) => { if (e.key === "Enter") reply(); });
 enrollBtn.addEventListener("click", enroll);
@@ -1041,3 +1268,9 @@ refreshWakeStatus();       // Phase 10
 refreshHealth();           // Phase 10
 refreshVoices();           // Phase 11: populate the natural-voice picker
 connectWS();
+// Phase 17: the MJPEG <img> can't send an Authorization header - append the
+// token to its URL when one is stored. (No-op with auth off.)
+if (authToken) {
+  const vid = document.getElementById("video");
+  if (vid) vid.src = tokenQS("/video");
+}

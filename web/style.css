@@ -425,6 +425,25 @@ body.deaf .translated { font-size: 18px; }
 }
 .reply-row button:active, .ghost:active { transform: translateY(0); }
 
+/* Phase 17: canned quick-reply chips + live-caption log. */
+.quick-replies { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.chip-reply {
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 999px;
+  padding: 8px 14px; cursor: pointer; font-size: 13px;
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.chip-reply:hover { border-color: var(--accent); background: var(--panel-3); }
+#captions-btn.active { border-color: var(--accent); background: var(--panel-3); }
+.captions-log {
+  margin-top: 10px; max-height: 180px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.caption-line {
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 12px; font-size: 14px; line-height: 1.4;
+}
+
 .sub-h {
   font-size: 12px; margin: 16px 0 8px; color: var(--muted);
   text-transform: uppercase; letter-spacing: .5px; font-weight: 700;
@@ -473,6 +492,15 @@ body.deaf .translated { font-size: 18px; }
    =========================================================================== */
 .history-head { display: flex; align-items: center; justify-content: space-between; }
 .hist-actions { display: flex; gap: 8px; }
+.hist-search { margin-top: 10px; }
+.hist-search input {
+  width: 100%; box-sizing: border-box;
+  background: var(--bg-2, rgba(255,255,255,.04));
+  color: inherit; border: 1px solid var(--border);
+  border-radius: 10px; padding: 10px 12px; font-size: 15px;
+}
+.hist-search input:focus-visible { outline: 2px solid var(--accent, #7aa2ff); }
+.h-empty { color: var(--muted, #9aa3b2); padding: 14px 0; }
 .history-list { list-style: none; margin: 10px 0 0; padding: 0; }
 .history-list li {
   display: flex; gap: 14px; align-items: center;
@@ -521,6 +549,30 @@ body.deaf .announcement { font-size: 18px; }
   100% { box-shadow: none; }
 }
 .event-card.flash { animation: access-flash 0.95s var(--ease) 2; }
+
+/* Phase 17: persistent alert banner - the non-animated deaf-alert channel.
+   High-contrast per alert kind; stays until acknowledged; NO animation so it
+   survives prefers-reduced-motion intact (it appears/disappears instantly). */
+#alert-banner {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 18px; font-size: 20px; font-weight: 700;
+  cursor: pointer; border-bottom: 3px solid #000;
+}
+#alert-banner[hidden] { display: none; }
+#alert-banner[data-kind="known"]    { background: #16a34a; color: #fff; }
+#alert-banner[data-kind="delivery"] { background: #f59e0b; color: #111; }
+#alert-banner[data-kind="unknown"]  { background: #2563eb; color: #fff; }
+#alert-banner[data-kind="spoof"]    { background: #dc2626; color: #fff; }
+#alert-banner .ab-kind { text-transform: uppercase; letter-spacing: .04em; }
+#alert-banner .ab-text { flex: 1; font-weight: 500; font-size: 17px; }
+#alert-banner .ab-ok {
+  background: rgba(0,0,0,.28); color: inherit; border: 2px solid currentColor;
+  border-radius: 8px; padding: 6px 18px; font-size: 16px; font-weight: 700;
+  cursor: pointer;
+}
+body.deaf #alert-banner { font-size: 24px; padding: 18px; }
+body.deaf #alert-banner .ab-text { font-size: 21px; }
 
 /* ===========================================================================
    Auto-enroll suggestions (Phase 9)

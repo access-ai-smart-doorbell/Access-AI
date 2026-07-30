@@ -182,6 +182,16 @@ body {
 /* ---------------- Fields ---------------- */
 .field-label { display: block; font-weight: 700; margin-bottom: .5rem; }
 .reply-row { display: flex; gap: .5rem; align-items: center; }
+/* Phase 17: one-tap canned replies under the reply box. Big touch targets —
+   a deaf user answering the door is often in a hurry. */
+.quick-replies { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .6rem; }
+.chip-reply {
+  background: var(--card); color: inherit;
+  border: 1px solid var(--border, rgba(255,255,255,.14));
+  border-radius: 999px; padding: .55rem .9rem; font-size: .95rem;
+  min-height: 42px; cursor: pointer;
+}
+.chip-reply:active { background: var(--accent); color: #fff; }
 input[type=text], input[type=url], select {
   flex: 1; min-height: var(--tap);
   background: var(--bg-2); color: var(--text);
@@ -219,6 +229,13 @@ input[type=file] {
 .live-actions { display: flex; gap: .5rem; margin-top: .8rem; flex-wrap: wrap; }
 
 /* ---------------- History ---------------- */
+.hist-search {
+  width: 100%; box-sizing: border-box; margin: 0 0 .8rem;
+  background: var(--card); color: inherit;
+  border: 1px solid var(--border, rgba(255,255,255,.12));
+  border-radius: 12px; padding: .65rem .8rem; font-size: 1rem;
+}
+.hist-search:focus-visible { outline: 2px solid var(--accent, #7aa2ff); }
 .history-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .7rem; }
 .hist-item {
   display: flex; gap: .75rem; align-items: center; text-align: left;

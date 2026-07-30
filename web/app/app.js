@@ -13,19 +13,36 @@ const $ = (id) => document.getElementById(id);
 /* ---------------- Server base URL + tiny API layer ---------------- */
 const URL_KEY = "accessai.serverUrl";
 let SERVER = (localStorage.getItem(URL_KEY) || location.origin).replace(/\/+$/, "");
+/* Phase 17: optional bearer token (the server's ACCESSAI_TOKEN). fetch() sends
+ * it as a header; <img> tags (MJPEG, snapshots) and the WebSocket can't set
+ * headers, so api() appends ?token= for them instead. */
+const TOKEN_KEY = "accessai.token";
+let TOKEN = localStorage.getItem(TOKEN_KEY) || "";
 
-const api = (path) => `${SERVER}${path}`;
+function tokenQS(url) {
+  if (!TOKEN) return url;
+  return url + (url.includes("?") ? "&" : "?") +
+    "token=" + encodeURIComponent(TOKEN);
+}
+const api = (path) => tokenQS(`${SERVER}${path}`);
+/* Append a query param to a URL that may already carry ?token= */
+const withQS = (url, qs) => url + (url.includes("?") ? "&" : "?") + qs;
 function wsUrl() {
   const u = new URL(SERVER);
   u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
   u.pathname = "/events";
-  return u.toString();
+  return tokenQS(u.toString());
 }
-async function apiFetch(path, opts) {
+async function apiFetch(path, opts = {}) {
+  if (TOKEN) {
+    opts = { ...opts, headers: { ...(opts.headers || {}),
+                                 "Authorization": `Bearer ${TOKEN}` } };
+  }
   return fetch(api(path), opts);
 }
 async function apiJSON(path, opts) {
   const r = await apiFetch(path, opts);
+  if (r.status === 401) throw new Error("unauthorized — set the access token in Settings");
   if (!r.ok) throw new Error(`${path} → ${r.status}`);
   return r.json();
 }
@@ -163,7 +180,7 @@ function renderHome(ev) {
 
   const snap = $("home-snap");
   if (ev.event_id) {
-    snap.src = api(`/snapshot/${ev.event_id}`) + `?t=${Date.now()}`;
+    snap.src = withQS(api(`/snapshot/${ev.event_id}`), `t=${Date.now()}`);
     snap.hidden = false;
   } else {
     snap.hidden = true;
@@ -238,23 +255,46 @@ async function doHearVisitor(btn, subEl) {
   }
 }
 
-// Reply — spoken at the door.
-$("reply-btn").addEventListener("click", sendReply);
+// Reply — spoken at the door. Optional `preset` lets a quick-reply chip send
+// directly without touching the text box.
+$("reply-btn").addEventListener("click", () => sendReply());
 $("reply-text").addEventListener("keydown", (e) => { if (e.key === "Enter") sendReply(); });
-async function sendReply() {
-  const text = $("reply-text").value.trim();
+async function sendReply(preset) {
+  const text = (preset != null ? preset : $("reply-text").value).trim();
   if (!text) return;
   try {
     const r = await apiJSON("/reply", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
     });
-    $("reply-text").value = "";
+    if (preset == null) $("reply-text").value = "";
     toast($("reply-note"), r.spoken ? "Spoken at the door ✓" : "Sent (audio unavailable at the door).", !r.spoken);
   } catch (e) {
     toast($("reply-note"), `Reply failed: ${e.message}`, true);
   }
 }
+
+// Phase 17: load canned quick replies and render them as one-tap chips.
+async function loadQuickReplies() {
+  const box = $("quick-replies");
+  if (!box) return;
+  try {
+    const r = await apiJSON("/quick_replies");
+    const replies = (r && r.replies) || [];
+    box.innerHTML = "";
+    for (const text of replies) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "chip-reply";
+      b.textContent = text;
+      b.addEventListener("click", () => sendReply(text));
+      box.appendChild(b);
+    }
+  } catch {
+    box.innerHTML = "";   // server too old / unauthorized — hide silently
+  }
+}
+loadQuickReplies();
 
 // Ask — text or on-phone speech recognition → /command → spoken answer.
 $("ask-btn").addEventListener("click", () => sendCommand($("ask-text").value));
@@ -305,7 +345,7 @@ function askByVoice() {
 const liveImg = $("live-img");
 const liveOverlay = $("live-overlay");
 function liveConnect() {
-  liveImg.src = api(`/video`) + `?t=${Date.now()}`;
+  liveImg.src = withQS(api(`/video`), `t=${Date.now()}`);
   liveOverlay.textContent = "Connecting to the camera…";
   liveImg.onload = () => { liveOverlay.style.display = "none"; };
   liveImg.onerror = () => { liveOverlay.style.display = "grid"; liveOverlay.textContent = "Camera unavailable — tap Reconnect."; };
@@ -319,12 +359,24 @@ $("live-stop").addEventListener("click", liveStop);
  * History tab
  * ===================================================================== */
 $("hist-refresh").addEventListener("click", refreshHistory);
+{
+  // Debounced live search over the server-side ?q= filter.
+  let histTimer = null;
+  $("hist-search").addEventListener("input", () => {
+    clearTimeout(histTimer);
+    histTimer = setTimeout(refreshHistory, 250);
+  });
+}
 
 async function refreshHistory() {
   const list = $("history-list");
   try {
-    const rows = await apiJSON("/history?limit=50");
+    const q = ($("hist-search")?.value || "").trim();
+    const rows = await apiJSON(
+      "/history?limit=50" + (q ? `&q=${encodeURIComponent(q)}` : ""));
     $("history-empty").hidden = rows.length > 0;
+    $("history-empty").textContent =
+      q && rows.length === 0 ? `No visits match “${q}”.` : "No visits yet.";
     list.innerHTML = "";
     rows.forEach((ev) => list.appendChild(historyItem(ev)));
   } catch (e) {
@@ -415,6 +467,13 @@ $("server-test").addEventListener("click", async () => {
   } catch (e) {
     toast($("server-note"), `Failed: ${e.message}`, true);
   }
+});
+$("token-save").addEventListener("click", () => {
+  TOKEN = $("server-token").value.trim();
+  if (TOKEN) localStorage.setItem(TOKEN_KEY, TOKEN);
+  else localStorage.removeItem(TOKEN_KEY);
+  toast($("server-note"), TOKEN ? "Token saved. Reconnecting…" : "Token cleared.", false);
+  connectWS();      // reconnect the live channel with the new credentials
 });
 
 // Mode segmented control.
@@ -539,6 +598,7 @@ async function loadHealth() {
 
 function refreshSettings() {
   $("server-url").value = SERVER;
+  $("server-token").value = TOKEN;
   loadVoices(); loadKnown(); loadHealth();
   apiJSON("/mode").then((r) => applyMode(r.mode)).catch(() => {});
 }
@@ -584,14 +644,67 @@ function handleMessage(msg) {
   }
 }
 
+/* Phase 17: per-kind alert channels. One alert_kind string from the server
+ * keys vibration rhythm, notification urgency, and repeat-until-ack, so a
+ * deaf user can classify the visitor without reading. */
+const VIBRATIONS = {
+  known:    [150, 80, 300],
+  delivery: [120, 90, 120, 90, 120],
+  unknown:  [400],
+  spoof:    [600, 200, 600, 200, 600],
+};
+const KIND_LABEL = {
+  known: "Known visitor", delivery: "Likely delivery",
+  unknown: "Unknown visitor", spoof: "⚠ Possible spoof",
+};
+function alertKindOf(ev) {
+  return ev.alert_kind ||
+    (ev.is_spoof ? "spoof"
+     : (ev.identity && ev.identity.known) ? "known"
+     : /delivery/.test(ev.intent || "") ? "delivery" : "unknown");
+}
+let alertRepeat = null;
+
 function onDoorbell(ev) {
   if (!ev) return;
   renderHome(ev);
   showAlert(ev);
-  // DEAF / BOTH: flash + vibrate + beep.
+  const kind = alertKindOf(ev);
+  // DEAF / BOTH: flash + per-kind vibration + beep, repeating until the
+  // overlay is dismissed (one missed flash must not be a missed visitor).
   if (currentMode === "deaf" || currentMode === "both") {
-    flash(); beep();
-    if (navigator.vibrate) { try { navigator.vibrate([300, 120, 300]); } catch {} }
+    const fire = () => {
+      flash(); beep();
+      if (navigator.vibrate) {
+        try { navigator.vibrate(VIBRATIONS[kind] || VIBRATIONS.unknown); } catch {}
+      }
+    };
+    fire();
+    clearInterval(alertRepeat);
+    let rounds = 0;
+    alertRepeat = setInterval(() => {
+      if ($("alert-overlay").hidden || ++rounds >= 5) {
+        clearInterval(alertRepeat); alertRepeat = null; return;
+      }
+      fire();
+    }, 6000);
+  }
+  // Hidden app (other tab / screen off with browser alive): OS notification.
+  if (document.hidden && "Notification" in window) {
+    const fireNote = () => {
+      try {
+        const n = new Notification(`AccessAI — ${KIND_LABEL[kind] || kind}`, {
+          body: ev.announcement_text || "Someone is at the door.",
+          tag: "accessai-doorbell",
+          requireInteraction: kind === "spoof",
+        });
+        n.onclick = () => { window.focus(); n.close(); };
+      } catch {}
+    };
+    if (Notification.permission === "granted") fireNote();
+    else if (Notification.permission !== "denied") {
+      Notification.requestPermission().then((p) => { if (p === "granted") fireNote(); });
+    }
   }
   // BLIND / BOTH: speak the announcement on the phone.
   if (currentMode === "blind" || currentMode === "both") {
@@ -603,7 +716,7 @@ function onDoorbell(ev) {
 function showAlert(ev) {
   $("alert-text").textContent = ev.announcement_text || "Someone is at the door.";
   const snap = $("alert-snap");
-  if (ev.event_id) { snap.src = api(`/snapshot/${ev.event_id}`) + `?t=${Date.now()}`; snap.hidden = false; }
+  if (ev.event_id) { snap.src = withQS(api(`/snapshot/${ev.event_id}`), `t=${Date.now()}`); snap.hidden = false; }
   else snap.hidden = true;
   renderPeople($("alert-people"), ev);
   const ov = $("alert-overlay");
@@ -612,6 +725,7 @@ function showAlert(ev) {
 function hideAlert() {
   const ov = $("alert-overlay");
   ov.hidden = true; ov.setAttribute("aria-hidden", "true");
+  if (alertRepeat) { clearInterval(alertRepeat); alertRepeat = null; }
   speakAudioEl.pause();
 }
 $("alert-ok").addEventListener("click", hideAlert);

@@ -96,6 +96,9 @@
                  placeholder="I'll be right there…" autocomplete="off" />
           <button class="btn btn-primary" id="reply-btn">Send</button>
         </div>
+        <!-- Phase 17: canned one-tap replies (populated from /quick_replies). -->
+        <div id="quick-replies" class="quick-replies" role="group"
+             aria-label="Quick replies"></div>
         <div class="note" id="reply-note" aria-live="polite"></div>
       </div>
 
@@ -133,6 +136,9 @@
         <h2>History</h2>
         <button class="btn btn-ghost btn-sm" id="hist-refresh">⟳ Refresh</button>
       </div>
+      <input class="hist-search" id="hist-search" type="search"
+             placeholder="Search name, intent, or date…"
+             aria-label="Search visit history" autocomplete="off" />
       <ul class="history-list" id="history-list"></ul>
       <div class="empty" id="history-empty" hidden>No visits yet.</div>
     </section>
@@ -149,6 +155,13 @@
         <div class="reply-row" style="margin-top:.5rem">
           <button class="btn btn-ghost" id="server-test">Test connection</button>
           <span class="note" id="server-note" aria-live="polite"></span>
+        </div>
+        <label class="field-label" for="server-token" style="margin-top:.75rem">Access token
+          <span class="hint">(only if the server sets ACCESSAI_TOKEN)</span></label>
+        <div class="reply-row">
+          <input id="server-token" type="password" autocomplete="off"
+                 placeholder="leave empty for open servers" />
+          <button class="btn btn-primary" id="token-save">Save</button>
         </div>
       </div>
 
