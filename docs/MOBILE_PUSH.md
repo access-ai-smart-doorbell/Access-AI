@@ -1,9 +1,19 @@
 # Mobile Background Push (FCM) — the later path
 
-**Status: documented, NOT implemented.** The Phase-14 PWA delivers **live** alerts
+**Status: server scaffolding IMPLEMENTED (Phase 17); FCM delivery needs your
+Firebase credentials + HTTPS.** The Phase-14 PWA delivers **live** alerts
 over a WebSocket while the app is open. Waking the phone when the app is **closed**
-requires a push service (FCM). This file is the recipe for that upgrade; no
-Firebase dependency is added now.
+requires a push service (FCM).
+
+What already works (no Firebase needed):
+- `POST /register_push` / `POST /unregister_push` — device tokens are stored in
+  the additive `push_tokens` table (upsert; re-registering refreshes mode).
+- Every doorbell event fans out to registered tokens via a fire-and-forget
+  executor hook in `broadcast()` — it can never delay the doorbell.
+- With `ENABLE_PUSH = False` (default) the sender is stored-only and logs one
+  hint per boot. Flip the flag + set `ACCESSAI_FCM_PROJECT` and
+  `ACCESSAI_FCM_CREDENTIALS` (a service-account JSON path) in `.env` to light
+  up real FCM HTTP-v1 delivery (`pip install google-auth` if missing).
 
 ## Why it isn't on yet
 

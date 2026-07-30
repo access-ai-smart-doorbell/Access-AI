@@ -30,13 +30,13 @@ heavy module is optional and degrades gracefully; every claim is hedged
 | Age / gender | estimate age range + gender | InsightFace **genderage** CNN | InsightFace | Comes free with the face pack |
 | **Liveness / anti-spoof** | is it a real face or a photo? | **MiniFASNet** (Silent-Face CNN classifier) via ONNX | onnxruntime | Detects print/replay attacks; single frame |
 | Object / person **detection** | people, bags, parcels | **YOLOv8-nano** (one-stage anchor-free detector) | Ultralytics | ~6 MB, CPU-friendly, 80 COCO classes |
-| **Re-identification** | "have I seen this stranger before?" | **HSV colour histogram** + cosine (placeholder; ONNX ReID model drops in) | OpenCV / onnxruntime | Appearance memory when no face is visible |
+| **Re-identification** | "have I seen this stranger before?" | **HSV colour histogram** + cosine (placeholder; OSNet `.onnx` drops in via `scripts/fetch_reid_model.py`) | OpenCV / onnxruntime | Appearance memory when no face is visible |
 | **Scene description (VLM)** | describe clothing / mood / scene | **GPT-4o-mini** (vision) over an OpenAI-compatible API | GitHub Models endpoint | Rich language a local model can't match |
 | **OCR** | read a courier label | same GPT-4o-mini call (`describe_and_read`) | GitHub Models | Reuses one VLM round-trip, no 2nd model |
 | **Speech-to-text** | transcribe what the visitor says | **Whisper** (base, encoder-decoder transformer) | openai-whisper | Robust, offline, multilingual |
 | **Voice-activity detection** | ignore silence/noise before Whisper | **Silero VAD** (neural), fallback = RMS energy gate | silero-vad | Whisper hallucinates on silence; VAD prevents it |
 | **Translation** | visitor's language → user's | GitHub Models chat (LLM MT); local NLLB/IndicTrans2 optional | GitHub Models | Free, no heavy local MT model |
-| **Wake word** | always-on "hey jarvis" trigger | **openWakeWord** (small ONNX classifier on streaming audio) | openwakeword | Pure-Python, CPU, no cloud |
+| **Wake word** | always-on "hey access" trigger | **openWakeWord** (small ONNX classifier on streaming audio) — custom "Hey Access" model trained offline from synthetic Kokoro speech (`scripts/train_wakeword.py`) | openwakeword | Pure-Python, CPU, no cloud |
 | **Text-to-speech** | speak the announcement | **Kokoro** (ONNX neural TTS) → edge-tts → pyttsx3 fallback | kokoro-onnx | Offline, natural voice |
 | **Intent engine** | delivery? visitor? stranger? | **Rule-based priority cascade** (pure functions) | — | Explainable, deterministic, no training data |
 

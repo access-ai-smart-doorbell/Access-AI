@@ -20,7 +20,7 @@
 
 ...delivered as **speech (Blind Mode)** or **large text + flash + two-way chat
 (Deaf Mode)**, in **11 languages**, and — in Blind Mode — controllable entirely
-**hands-free by voice** ("*hey jarvis… who is at the door?*").
+**hands-free by voice** ("*hey access… who is at the door?*").
 
 Built in **10 phases**, each one a working, demoable system. **This repo is
 complete through Phase 10** — every capability below is wired into a single
@@ -154,7 +154,8 @@ change a value; they never scatter config. Key Phase-10 flags:
 
 ```python
 ENABLE_WAKEWORD = True              # wake word + voice commands
-WAKEWORD_MODEL = "hey_jarvis"       # pretrained placeholder phrase — say "hey jarvis"
+WAKEWORD_MODEL_DIR = "models/wakeword"  # auto-loads the first .onnx here ("hey access")
+WAKEWORD_MODEL = "hey_jarvis"       # pretrained FALLBACK phrase if no custom model exists
 WAKEWORD_THRESHOLD = 0.5            # 0–1 detection score; raise to reduce false wakes
 WAKEWORD_COMMAND_SECONDS = 4        # seconds of command audio captured after a wake
 WAKEWORD_ALWAYS_ON = False          # OPT-IN: start the always-listening mic at boot
@@ -208,15 +209,16 @@ No camera, mic, network, or TTS is touched by the tests.
 
 ## What is real vs. placeholder
 
-AccessAI is a fully working system, but three components ship as **deliberate,
-loudly-logged placeholders** with a documented one-drop-in upgrade. They are
-surfaced as `placeholder` (amber) in `GET /status` and the health panel.
+AccessAI is a fully working system. Three components originally shipped as
+**deliberate, loudly-logged placeholders** with a one-drop-in upgrade — each is
+auto-detected at boot and reported honestly in `GET /status` and the health
+panel (`placeholder` shows amber only while the fallback is active).
 
-| Component | Shipped (works today) | Replace before deployment with… |
-|-----------|-----------------------|----------------------------------|
-| **Anti-spoof** (Phase 5) | Laplacian/texture heuristic — catches obvious printed photos | Two MiniFASNet `.onnx` files in `models/antispoof/` (auto-loads via onnxruntime, zero code change) |
-| **Re-ID** (Phase 9) | HSV colour-histogram embedding — keys mostly on clothing colour | An OSNet `.onnx` in `models/reid/` (auto-loads, same interface) |
-| **Wake word** (Phase 10) | Pretrained openWakeWord **"hey jarvis"** — real detector, generic phrase | A custom-trained "Hey Access" openWakeWord model (training outlined in code comments) |
+| Component | Fallback (if model files absent) | Upgrade (auto-loads, zero code change) | Status in this repo |
+|-----------|----------------------------------|----------------------------------------|---------------------|
+| **Anti-spoof** (Phase 5) | Laplacian/texture heuristic — catches obvious printed photos | Two MiniFASNet `.onnx` in `models/antispoof/` (`scripts/fetch_antispoof_models.py`) | ✅ **upgraded** — models present |
+| **Re-ID** (Phase 9) | HSV colour-histogram embedding — keys mostly on clothing colour | An OSNet `.onnx` in `models/reid/` (`scripts/fetch_reid_model.py` — download or convert an official torchreid checkpoint) | ⚠️ fallback active — run the fetch script (needs network or a local checkpoint) |
+| **Wake word** (Phase 10) | Pretrained openWakeWord "hey jarvis" phrase | A custom **"Hey Access"** `.onnx` in `models/wakeword/`, trained fully **offline** by `scripts/train_wakeword.py` (synthetic Kokoro voices → openWakeWord embeddings → tiny classifier) | ✅ **upgraded** — `hey_access.onnx` trained + streaming-verified |
 
 **Everything else is real:** InsightFace recognition, YOLOv8 detection, the
 intent engine, TTS output + mode routing, cloud VLM/OCR, offline Whisper speech,

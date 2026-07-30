@@ -215,8 +215,10 @@ so the agent understands *why* the code is shaped as it is.
 - **Phase 10 — Wake Word + Voice Commands + Hardening.** openWakeWord (opt-in
   always-on; push-to-talk default); a pure `parse_command` + `handle_command`; a
   central `GET /status` health panel; a 41-test pytest suite; `/ring` webhook; and
-  `docs/HARDWARE.md` + `docs/MOBILE.md`. Wake word is a **pretrained placeholder**
-  ("hey_jarvis"; custom "Hey Access" is future).
+  `docs/HARDWARE.md` + `docs/MOBILE.md`. Wake word shipped as a **pretrained
+  placeholder** ("hey_jarvis"; since upgraded — a custom "Hey Access" model is
+  trained offline by `scripts/train_wakeword.py` and auto-loads from
+  `models/wakeword/`).
 - **Phase 11 — Natural Voice (Kokoro-ONNX + edge-tts).** Replaced robotic espeak
   with **Kokoro** (natural, offline, onnxruntime — torch-safe) + edge-tts online
   fallback + in-app voice picker. Playback shells out to a subprocess player to
@@ -413,12 +415,16 @@ amber = placeholder, red = down):
   internet; degrades to local-only offline.
 - **Speech (Whisper + Silero VAD):** REAL, offline.
 - **Natural TTS (Kokoro-ONNX):** REAL, offline; edge-tts online alt.
-- **Anti-spoof:** **PLACEHOLDER** (Laplacian heuristic). Drop MiniFASNet `.onnx`
-  into `models/antispoof/` to upgrade — zero code change.
+- **Anti-spoof:** **REAL** — the two MiniFASNet `.onnx` models sit in
+  `models/antispoof/` (fetched via `scripts/fetch_antispoof_models.py`; the
+  Laplacian heuristic remains the automatic fallback if they are removed).
 - **Re-ID:** **PLACEHOLDER** (HSV colour histogram — keys on clothing colour). Drop
-  OSNet `.onnx` into `models/reid/` to upgrade — zero code change.
-- **Wake word:** **PLACEHOLDER** ("hey_jarvis" pretrained). Train a custom
-  "Hey Access" openWakeWord model to upgrade.
+  OSNet `.onnx` into `models/reid/` to upgrade — zero code change
+  (`scripts/fetch_reid_model.py` downloads or converts an official checkpoint).
+- **Wake word:** **REAL** — a custom "Hey Access" model
+  (`models/wakeword/hey_access.onnx`) trained fully offline by
+  `scripts/train_wakeword.py` from synthetic Kokoro speech; the pretrained
+  "hey_jarvis" phrase remains the automatic fallback if it is removed.
 
 Being explicit about this is a strength for the review panel — it demonstrates
 engineering maturity, and each placeholder is a documented drop-in.

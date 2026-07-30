@@ -91,10 +91,11 @@ object detector — the cloud scene description is optional and degrades gracefu
 > and downgrades it to Unknown."
 
 **Honesty line (say it — panels reward this):**
-> "In this build the liveness check is a lightweight placeholder; the architecture
-> drops in a production MiniFASNet model as a single file with no code change. Our
-> `/status` panel flags exactly which components are production-grade versus
-> demo-stage."
+> "Liveness here is the production MiniFASNet ONNX pair — it started as a
+> lightweight heuristic placeholder, and upgrading was literally dropping two
+> model files into a folder, no code change. Our `/status` panel flags exactly
+> which components are production-grade versus demo-stage; today only re-ID is
+> still on its placeholder."
 
 ---
 
@@ -145,10 +146,12 @@ Show the **GET /status** health panel.
 > "One data object — the *Visitor Event* — flows through every module: face,
 > objects, liveness, speech, translation, memory. That's why we built this in ten
 > clean phases without rewrites, and why each capability is independently testable
-> — 41 automated tests pass. This panel shows every module's health, including
-> which three components are demo-placeholders with a documented upgrade path.
-> It's private by design, runs on a laptop today for under ₹5,000, and moves to
-> embedded hardware by changing one line. Thank you."
+> — 64 automated tests pass. This panel shows every module's health honestly:
+> anti-spoof and the wake word started as flagged placeholders and have been
+> upgraded in place — real MiniFASNet liveness models, and a custom 'Hey Access'
+> wake word trained offline from our own TTS voices. Only re-ID still shows its
+> documented drop-in path. It's private by design, runs on a laptop today for
+> under ₹5,000, and moves to embedded hardware by changing one line. Thank you."
 
 ---
 
