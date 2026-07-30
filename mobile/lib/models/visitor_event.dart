@@ -83,6 +83,10 @@ class VisitorEvent {
   final String intent;
   final String announcementText;
 
+  /// Server-derived alert taxonomy (Phase 17): spoof | known | delivery |
+  /// unknown. Keys the vibration pattern / earcon / notification urgency.
+  final String alertKind;
+
   const VisitorEvent({
     required this.eventId,
     required this.timestamp,
@@ -109,6 +113,7 @@ class VisitorEvent {
     required this.reidSeenCount,
     required this.intent,
     required this.announcementText,
+    this.alertKind = '',
   });
 
   factory VisitorEvent.fromJson(Map<String, dynamic> j) {
@@ -140,7 +145,18 @@ class VisitorEvent {
       reidSeenCount: asInt(j['reid_seen_count']),
       intent: asStr(j['intent'], 'unknown visitor'),
       announcementText: asStr(j['announcement_text']),
+      alertKind: asStr(j['alert_kind']),
     );
+  }
+
+  /// The alert kind, deriving locally when the server didn't send one (older
+  /// backend): spoof beats known beats delivery beats unknown.
+  String get kind {
+    if (alertKind.isNotEmpty) return alertKind;
+    if (isSpoof || anySpoof) return 'spoof';
+    if (known || people.any((p) => p.known)) return 'known';
+    if (intent.contains('delivery')) return 'delivery';
+    return 'unknown';
   }
 
   /// How many people the UI should present. Prefer visitor_count; fall back to

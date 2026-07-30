@@ -304,7 +304,7 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
   }
 }
 
-/// The "hey jarvis" always-on toggle. When on, the phone listens hands-free and
+/// The "hey access" always-on toggle. When on, the phone listens hands-free and
 /// answers spoken questions without any tap (like "hey Siri"). Off by default —
 /// an open mic is a battery + privacy choice the user opts into.
 class _WakeWordCard extends ConsumerWidget {
@@ -318,7 +318,7 @@ class _WakeWordCard extends ConsumerWidget {
       glow: on,
       child: Semantics(
         toggled: on,
-        label: 'Hey Jarvis hands-free listening',
+        label: 'Hey Access hands-free listening',
         child: Row(
           children: [
             Container(
@@ -348,11 +348,11 @@ class _WakeWordCard extends ConsumerWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('“Hey Jarvis”', style: text.titleMedium),
+                  Text('“Hey Access”', style: text.titleMedium),
                   const SizedBox(height: 2),
                   Text(
                     on
-                        ? 'Listening hands-free. Say “Hey Jarvis”, then your '
+                        ? 'Listening hands-free. Say “Hey Access”, then your '
                             'question.'
                         : 'Turn on to ask without tapping, like “Hey Siri”.',
                     style: text.bodySmall
@@ -373,7 +373,7 @@ class _WakeWordCard extends ConsumerWidget {
                       error: true);
                 } else {
                   showSnack(context,
-                      ok ? 'Hey Jarvis is listening' : 'Hey Jarvis off');
+                      ok ? 'Hey Access is listening' : 'Hey Access off');
                 }
               },
             ),

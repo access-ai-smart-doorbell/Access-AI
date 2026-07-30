@@ -58,6 +58,7 @@ class HistoryScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final history = ref.watch(historyProvider);
+    final query = ref.watch(historySearchProvider);
     final reduce = context.reduceMotion;
 
     return Scaffold(
@@ -75,46 +76,100 @@ class HistoryScreen extends ConsumerWidget {
       body: MeshScaffoldBody(
         child: SafeArea(
           bottom: false,
-          child: RefreshIndicator(
-            onRefresh: () async {
-              ref.invalidate(historyProvider);
-              await ref.read(historyProvider.future);
-            },
-            child: switch (history) {
-              AsyncData(:final value) when value.isEmpty => _empty(context),
-              AsyncData(:final value) => ContentWidth(
-                  child: ListView.separated(
-                    // 120 bottom clears the floating glass nav pill.
-                    padding: const EdgeInsets.fromLTRB(
-                        T.s16, T.s16, T.s16, 120),
-                    itemCount: value.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: T.s12),
-                    itemBuilder: (context, i) {
-                      final e = value[i];
-                      final tag =
-                          'event-${e.eventId.isNotEmpty ? e.eventId : i}';
-                      final card = EventCard(
-                        event: e,
-                        heroTag: tag,
-                        onTap: () => _open(context, e, tag),
-                      );
-                      if (reduce) return card;
-                      return card
-                          .animate()
-                          .fadeIn(
-                              duration: T.med,
-                              delay: Duration(
-                                  milliseconds: 40 * (i.clamp(0, 8))))
-                          .slideY(begin: 0.08, end: 0, curve: T.easeExpo);
-                    },
+          child: Column(
+            children: [
+              // Server-side search (?q=): name, intent, words said, or a date
+              // prefix like 2026-07-19. Objective 7: searchable history.
+              Padding(
+                padding: const EdgeInsets.fromLTRB(T.s16, T.s12, T.s16, 0),
+                child: ContentWidth(
+                  child: TextField(
+                    onChanged: (v) =>
+                        ref.read(historySearchProvider.notifier).set(v),
+                    decoration: InputDecoration(
+                      hintText: 'Search name, intent, or date…',
+                      prefixIcon: const Icon(Icons.search),
+                      suffixIcon: query.isEmpty
+                          ? null
+                          : IconButton(
+                              icon: const Icon(Icons.clear),
+                              tooltip: 'Clear search',
+                              onPressed: () => ref
+                                  .read(historySearchProvider.notifier)
+                                  .set(''),
+                            ),
+                    ),
+                    textInputAction: TextInputAction.search,
                   ),
                 ),
-              AsyncError(:final error) => _error(context, ref, '$error'),
-              _ => const Center(child: CircularProgressIndicator()),
-            },
+              ),
+              Expanded(
+                child: RefreshIndicator(
+                  onRefresh: () async {
+                    ref.invalidate(historyProvider);
+                    await ref.read(historyProvider.future);
+                  },
+                  child: switch (history) {
+                    AsyncData(:final value) when value.isEmpty =>
+                      query.isEmpty
+                          ? _empty(context)
+                          : _noMatches(context, query),
+                    AsyncData(:final value) => ContentWidth(
+                        child: ListView.separated(
+                          // 120 bottom clears the floating glass nav pill.
+                          padding: const EdgeInsets.fromLTRB(
+                              T.s16, T.s16, T.s16, 120),
+                          itemCount: value.length,
+                          separatorBuilder: (_, _) =>
+                              const SizedBox(height: T.s12),
+                          itemBuilder: (context, i) {
+                            final e = value[i];
+                            final tag =
+                                'event-${e.eventId.isNotEmpty ? e.eventId : i}';
+                            final card = EventCard(
+                              event: e,
+                              heroTag: tag,
+                              onTap: () => _open(context, e, tag),
+                            );
+                            if (reduce) return card;
+                            return card
+                                .animate()
+                                .fadeIn(
+                                    duration: T.med,
+                                    delay: Duration(
+                                        milliseconds: 40 * (i.clamp(0, 8))))
+                                .slideY(
+                                    begin: 0.08, end: 0, curve: T.easeExpo);
+                          },
+                        ),
+                      ),
+                    AsyncError(:final error) =>
+                      _error(context, ref, '$error'),
+                    _ => const Center(child: CircularProgressIndicator()),
+                  },
+                ),
+              ),
+            ],
           ),
         ),
       ),
+    );
+  }
+
+  Widget _noMatches(BuildContext context, String query) {
+    // Scrollable so pull-to-refresh keeps working with no results.
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(T.s32, T.s32, T.s32, 120),
+      children: [
+        const SizedBox(height: 48),
+        Center(
+          child: Text(
+            'No visits match “$query”.',
+            style: Theme.of(context).textTheme.bodyLarge,
+            textAlign: TextAlign.center,
+          ),
+        ),
+      ],
     );
   }
 

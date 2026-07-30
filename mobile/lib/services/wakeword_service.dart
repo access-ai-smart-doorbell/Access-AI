@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 
-/// On-device "hey jarvis" wake word — the phone's own always-on listener, so a
+/// On-device "hey access" wake word — the phone's own always-on listener, so a
 /// Blind user can ask hands-free like "hey Siri", WITHOUT holding the phone or
 /// tapping the mic.
 ///
@@ -15,7 +15,8 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 /// plugin the app already ships (device STT, offline-capable, no API key, no
 /// Porcupine AccessKey friction):
 ///   1. Continuously listen in short windows (STT auto-stops on silence).
-///   2. Each transcript is scanned for a wake phrase ("jarvis" / "hey jarvis").
+///   2. Each transcript is scanned for a wake phrase ("hey access", with
+///      "hey jarvis" kept as a legacy alias).
 ///   3. On a hit, whatever the user said AFTER the wake word in the same
 ///      utterance is taken as the question; if nothing followed, we arm a short
 ///      "command capture" window and use the next utterance as the question.
@@ -33,12 +34,23 @@ class WakeWordService {
 
   final stt.SpeechToText _speech = stt.SpeechToText();
 
-  /// Wake phrases we accept. Kept loose because device STT often mishears the
-  /// coined word "jarvis" (e.g. "travis", "jervis", "jarvis"), and we would
-  /// rather over-trigger the wake than make a Blind user repeat themselves.
+  /// Wake phrases we accept, LONGEST FIRST within each group (on an equal match
+  /// position, [_afterWake] takes the first list entry — longest-first stops a
+  /// prefix like "hey access" from shadowing "hey accessed" and leaving "ed"
+  /// behind as a bogus command). "Hey Access" is the product wake word (the
+  /// backend now runs a custom-trained hey_access model too); the jarvis set is
+  /// kept as a legacy alias. Two-word forms are matched loosely because device
+  /// STT often mishears them ("access" -> "axis"/"excess") and we would rather
+  /// over-trigger than make a Blind user repeat themselves. Bare single words
+  /// are allowed ONLY for coined words like "jarvis" — bare "access"/"axis" are
+  /// common English words and would false-wake on ordinary speech.
   static const List<String> _wakeVariants = [
-    'hey jarvis', 'hey jervis', 'hey travis', 'hey charvis',
-    'jarvis', 'jervis', 'travis', 'jarvit', 'jarwis', 'jaravis',
+    // primary: "Hey Access" + common STT mishearings of the two-word phrase
+    'hey accessed', 'hey access', 'hey assess', 'hey excess', 'hay access',
+    'hey acces', 'hey axis',
+    // legacy alias: "Hey Jarvis" + mishearings (bare forms OK: coined word)
+    'hey charvis', 'hey jarvis', 'hey jervis', 'hey travis',
+    'jaravis', 'jarvis', 'jervis', 'jarvit', 'jarwis',
   ];
 
   bool _ready = false;
@@ -83,7 +95,7 @@ class WakeWordService {
     // always-on loop. Before re-arming, salvage the last partial transcript:
     // Android often ends a session with error_speech_timeout WITHOUT ever
     // delivering a finalResult, which used to silently swallow a heard
-    // "hey jarvis". Repeated errors force a full engine re-initialize.
+    // "hey access". Repeated errors force a full engine re-initialize.
     _running = false;
     onListeningChanged?.call(false);
     final salvage = _lastPartial.trim();
@@ -256,7 +268,7 @@ class WakeWordService {
   }
 
   /// Index of the earliest wake variant in [lower], or -1. Longest (most
-  /// specific) variants are checked first so "hey jarvis" wins over "jarvis".
+  /// specific) variants are checked first so "hey accessed" wins over "hey access".
   int _wakeIndex(String lower) {
     var best = -1;
     for (final w in _wakeVariants) {

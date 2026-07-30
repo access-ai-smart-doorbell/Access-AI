@@ -221,6 +221,43 @@ class AudioService {
     }
   }
 
+  /// Phase 17: per-visitor-type haptics keyed by VisitorEvent.kind. Distinct
+  /// rhythms a deaf (or deafblind) user can tell apart in a pocket:
+  ///   known    — short-long ("ta-da", friendly)
+  ///   delivery — three quick even taps ("knock knock knock")
+  ///   unknown  — one plain long buzz
+  ///   spoof    — three LONG full-strength pulses (unmistakably a warning)
+  /// Unknown kinds fall back to the classic doorbell pattern; devices without
+  /// pattern support get one buzz (long for spoof). Never throws.
+  Future<void> kindVibrate(String kind) async {
+    const patterns = <String, List<int>>{
+      'known': [0, 150, 80, 400],
+      'delivery': [0, 130, 90, 130, 90, 130],
+      'unknown': [0, 500],
+      'spoof': [0, 650, 220, 650, 220, 650],
+    };
+    final pattern = patterns[kind];
+    if (pattern == null) return doorbellVibrate();
+    try {
+      final hasVibrator = await Vibration.hasVibrator();
+      if (!hasVibrator) return;
+      final hasPattern = await Vibration.hasCustomVibrationsSupport();
+      if (hasPattern) {
+        await Vibration.vibrate(
+          pattern: pattern,
+          // Spoof pulses run at full strength — it is a warning, not a chime.
+          intensities: kind == 'spoof'
+              ? List<int>.generate(pattern.length, (i) => i.isEven ? 0 : 255)
+              : const [],
+        );
+      } else {
+        await Vibration.vibrate(duration: kind == 'spoof' ? 1200 : 500);
+      }
+    } catch (e) {
+      debugPrint('kindVibrate($kind) failed: $e');
+    }
+  }
+
   /// A short success tap for confirming an action (e.g. Ring sent).
   Future<void> successTap() async {
     try {

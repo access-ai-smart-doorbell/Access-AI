@@ -6,12 +6,21 @@ import '../core/tokens.dart';
 /// common phrases plus a free-text field. Calls [onSend] with the text; the
 /// parent performs POST /reply and shows the result.
 class ReplyComposer extends StatefulWidget {
-  const ReplyComposer({super.key, required this.onSend, this.sending = false});
+  const ReplyComposer({
+    super.key,
+    required this.onSend,
+    this.sending = false,
+    this.quickReplies = defaultQuickReplies,
+  });
 
   final Future<void> Function(String text) onSend;
   final bool sending;
 
-  static const quickReplies = <String>[
+  /// The chips to show. Supplied by the caller from the server (Phase 17); the
+  /// constant is the offline / older-server fallback.
+  final List<String> quickReplies;
+
+  static const defaultQuickReplies = <String>[
     "I'll be right there",
     'Please leave it at the door',
     "Sorry, I'm not available",
@@ -54,7 +63,7 @@ class _ReplyComposerState extends State<ReplyComposer> {
           spacing: T.s8,
           runSpacing: T.s8,
           children: [
-            for (final q in ReplyComposer.quickReplies)
+            for (final q in widget.quickReplies)
               ActionChip(
                 avatar: const Icon(Icons.bolt,
                     size: 16, color: T.seed),

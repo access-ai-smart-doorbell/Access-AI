@@ -216,7 +216,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     index: 5,
                     child: GlassCard(
                       child: ReplyComposer(
-                          onSend: _reply, sending: _sendingReply),
+                        onSend: _reply,
+                        sending: _sendingReply,
+                        // Server-provided chips (Phase 17); the widget falls
+                        // back to its own defaults while loading or offline.
+                        quickReplies: ref.watch(quickRepliesProvider).valueOrNull ??
+                            ReplyComposer.defaultQuickReplies,
+                      ),
                     ),
                   ),
                 ],

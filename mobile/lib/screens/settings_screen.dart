@@ -26,6 +26,7 @@ class SettingsScreen extends ConsumerStatefulWidget {
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   late final TextEditingController _url;
+  late final TextEditingController _token;
   bool _testing = false;
   AppStatus? _health;
   String? _healthError;
@@ -59,6 +60,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   void initState() {
     super.initState();
     _url = TextEditingController(text: ref.read(baseUrlProvider));
+    _token = TextEditingController(text: ref.read(authTokenProvider));
     _loadVoices();
     _loadLanguage();
   }
@@ -66,6 +68,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   @override
   void dispose() {
     _url.dispose();
+    _token.dispose();
     super.dispose();
   }
 
@@ -76,6 +79,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       return;
     }
     await ref.read(baseUrlProvider.notifier).set(v);
+    await ref.read(authTokenProvider.notifier).set(_token.text);
     _url.text = ref.read(baseUrlProvider); // reflect normalized form
     ref.invalidate(historyProvider);
     ref.invalidate(knownProvider);
@@ -191,6 +195,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         labelText: 'Server address',
                         hintText: PrefsService.defaultBaseUrl,
                         prefixIcon: const Icon(Icons.dns_outlined),
+                      ),
+                    ),
+                    const SizedBox(height: T.s12),
+                    TextField(
+                      controller: _token,
+                      obscureText: true,
+                      autocorrect: false,
+                      decoration: const InputDecoration(
+                        labelText: 'Access token (optional)',
+                        hintText: 'only if the server sets ACCESSAI_TOKEN',
+                        prefixIcon: Icon(Icons.key_outlined),
                       ),
                     ),
                     const SizedBox(height: T.s8),

@@ -33,16 +33,33 @@ class BaseUrlNotifier extends Notifier<String> {
 final baseUrlProvider =
     NotifierProvider<BaseUrlNotifier, String>(BaseUrlNotifier.new);
 
+// --- Bearer token (Phase 17) -----------------------------------------------
+class AuthTokenNotifier extends Notifier<String> {
+  @override
+  String build() => ref.read(prefsProvider).authToken;
+
+  Future<void> set(String token) async {
+    await ref.read(prefsProvider).setAuthToken(token);
+    state = token.trim();
+  }
+}
+
+final authTokenProvider =
+    NotifierProvider<AuthTokenNotifier, String>(AuthTokenNotifier.new);
+
 /// Whether the user has confirmed a server URL at least once (drives first-run).
 final isConfiguredProvider = Provider<bool>((ref) {
   ref.watch(baseUrlProvider); // recompute after a save
   return ref.watch(prefsProvider).isConfigured;
 });
 
-// --- REST client (recreated when the base URL changes) --------------------
+// --- REST client (recreated when the base URL or token changes) ------------
 final apiProvider = Provider<ApiService>((ref) {
   final base = ref.watch(baseUrlProvider);
-  final api = ApiService(base);
+  final token = ref.watch(authTokenProvider);
+  // Stable per-install id so this phone can hold its own mode (Phase 17).
+  final deviceId = ref.read(prefsProvider).deviceId;
+  final api = ApiService(base, token: token, deviceId: deviceId);
   ref.onDispose(api.close);
   return api;
 });
@@ -69,7 +86,7 @@ final audioProvider = Provider<AudioService>((ref) {
   return a;
 });
 
-// --- On-device "hey jarvis" wake word -------------------------------------
+// --- On-device "hey access" wake word -------------------------------------
 /// The single always-on listener instance for the app's lifetime.
 final wakeWordServiceProvider = Provider<WakeWordService>((ref) {
   final svc = WakeWordService();
@@ -174,6 +191,13 @@ class ModeNotifier extends Notifier<String> {
 
 final modeProvider = NotifierProvider<ModeNotifier, String>(ModeNotifier.new);
 
+// --- Quick replies (Phase 17) ---------------------------------------------
+// Canned one-tap replies, fetched from the server so the household can edit
+// them in one place. The API layer already falls back to a built-in set, so
+// this never resolves empty.
+final quickRepliesProvider = FutureProvider<List<String>>(
+    (ref) => ref.watch(apiProvider).quickReplies());
+
 // --- Theme choice ---------------------------------------------------------
 class ThemeNotifier extends Notifier<AppThemeChoice> {
   @override
@@ -189,8 +213,21 @@ final themeProvider =
     NotifierProvider<ThemeNotifier, AppThemeChoice>(ThemeNotifier.new);
 
 // --- Data providers (auto-refresh when the API/base URL changes) ----------
-final historyProvider = FutureProvider<List<VisitorEvent>>(
-    (ref) async => ref.watch(apiProvider).history(limit: 50));
+/// Live search text for the History screen; historyProvider re-fetches with
+/// the server-side ?q= filter whenever this changes.
+class HistorySearchNotifier extends Notifier<String> {
+  @override
+  String build() => '';
+  void set(String q) => state = q;
+}
+
+final historySearchProvider =
+    NotifierProvider<HistorySearchNotifier, String>(HistorySearchNotifier.new);
+
+final historyProvider = FutureProvider<List<VisitorEvent>>((ref) async {
+  final q = ref.watch(historySearchProvider);
+  return ref.watch(apiProvider).history(limit: 50, q: q);
+});
 
 final knownProvider = FutureProvider<List<KnownPerson>>(
     (ref) async => ref.watch(apiProvider).known());

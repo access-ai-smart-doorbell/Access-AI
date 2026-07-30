@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -58,6 +60,7 @@ class DoorbellAlert extends StatefulWidget {
 class _DoorbellAlertState extends State<DoorbellAlert>
     with SingleTickerProviderStateMixin {
   late final AnimationController _flash;
+  Timer? _escalate; // Phase 17: re-buzz until acknowledged
   bool get _visual => widget.mode == 'deaf' || widget.mode == 'both';
   bool get _spoken => widget.mode == 'blind' || widget.mode == 'both';
 
@@ -76,8 +79,21 @@ class _DoorbellAlertState extends State<DoorbellAlert>
     if (!mounted) return;
     final reduce = context.reduceMotion;
     if (_visual) {
-      widget.audio.doorbellVibrate();
+      // Phase 17: the vibration rhythm identifies the visitor type by feel
+      // (known / delivery / unknown / spoof), and the alert ESCALATES —
+      // re-buzzing every 6s while unacknowledged — so one missed pulse is
+      // not a missed visitor. Dismissing the overlay stops it.
+      widget.audio.kindVibrate(widget.event.kind);
       if (!reduce) _flash.repeat(reverse: true);
+      _escalate?.cancel();
+      var rounds = 0;
+      _escalate = Timer.periodic(const Duration(seconds: 6), (t) {
+        if (!mounted || ++rounds >= 5) {
+          t.cancel();
+          return;
+        }
+        widget.audio.kindVibrate(widget.event.kind);
+      });
     }
     if (_spoken) {
       final text = _spokenText(widget.event);
@@ -104,6 +120,7 @@ class _DoorbellAlertState extends State<DoorbellAlert>
 
   @override
   void dispose() {
+    _escalate?.cancel();
     _flash.dispose();
     widget.audio.stop();
     super.dispose();

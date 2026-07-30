@@ -109,8 +109,15 @@ class _NavShellState extends ConsumerState<NavShell> {
     _lastAlertedId = ev.eventId;
     _alertOpen = true;
     try {
-      // The signature ding-dong earcon leads the alert (speech follows it).
-      await ref.read(audioProvider).sfx(Sfx.doorbell);
+      // A leading earcon classifies the visitor before any words: the warning
+      // chime for a spoof, the success chime for a recognised person, the
+      // signature ding-dong otherwise (speech follows it).
+      final earcon = switch (ev.kind) {
+        'spoof' => Sfx.error,
+        'known' => Sfx.success,
+        _ => Sfx.doorbell,
+      };
+      await ref.read(audioProvider).sfx(earcon);
       if (!mounted) return;
       await DoorbellAlert.show(
         context,

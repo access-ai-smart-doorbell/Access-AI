@@ -22,32 +22,52 @@ class ApiException implements Exception {
 /// call maps transport/backend failures to an ApiException with a readable
 /// message so callers can `try/catch` and show a snackbar instead of crashing.
 class ApiService {
-  ApiService(this.baseUrl)
+  ApiService(this.baseUrl, {this.token = '', this.deviceId = ''})
       : _dio = Dio(BaseOptions(
           baseUrl: baseUrl,
           connectTimeout: const Duration(seconds: 6),
           receiveTimeout: const Duration(seconds: 30),
           sendTimeout: const Duration(seconds: 30),
+          // Phase 17: bearer token when the server sets ACCESSAI_TOKEN.
+          headers: token.isEmpty
+              ? null
+              : {'Authorization': 'Bearer $token'},
           // Accept any status; we branch on it ourselves for clean messages.
           validateStatus: (_) => true,
         ));
 
   final String baseUrl;
+  final String token;
+
+  /// Opaque per-install id sent as `device` on /mode so this phone can hold its
+  /// own accessibility mode independent of the household default (Phase 17).
+  /// Empty => behaves exactly as before (touches the household default).
+  final String deviceId;
   final Dio _dio;
 
+  /// Append ?token= for consumers that can't send headers (MJPEG <img>,
+  /// snapshots, audio URLs, the WebSocket).
+  String _tq(String url) {
+    if (token.isEmpty) return url;
+    final sep = url.contains('?') ? '&' : '?';
+    return '$url${sep}token=${Uri.encodeQueryComponent(token)}';
+  }
+
   // --- URL helpers (for MJPEG / <img>) -----------------------------------
-  String get videoUrl => '$baseUrl/video';
+  String get videoUrl => _tq('$baseUrl/video');
   String knownPhotoUrl(String name) =>
-      '$baseUrl/known_photo/${Uri.encodeComponent(name)}';
+      _tq('$baseUrl/known_photo/${Uri.encodeComponent(name)}');
   String snapshotUrl(String eventId) =>
-      '$baseUrl/snapshot/${Uri.encodeComponent(eventId)}';
+      _tq('$baseUrl/snapshot/${Uri.encodeComponent(eventId)}');
   String speakAudioUrl(String text) =>
-      '$baseUrl/speak_audio?text=${Uri.encodeQueryComponent(text)}';
+      _tq('$baseUrl/speak_audio?text=${Uri.encodeQueryComponent(text)}');
 
   Uri get eventsWsUri {
     final u = Uri.parse(baseUrl);
     final scheme = u.scheme == 'https' ? 'wss' : 'ws';
-    return u.replace(scheme: scheme, path: '/events');
+    return u.replace(scheme: scheme, path: '/events', queryParameters: {
+      if (token.isNotEmpty) 'token': token,
+    });
   }
 
   // --- Core requests ------------------------------------------------------
@@ -65,6 +85,11 @@ class ApiService {
   }
 
   Map<String, dynamic> _okMap(Response r) {
+    if (r.statusCode == 401) {
+      throw ApiException(
+          'The server requires an access token. Enter it in Settings.',
+          statusCode: 401);
+    }
     if (r.statusCode == null || r.statusCode! >= 400) {
       final detail = r.data is Map ? asStr((r.data as Map)['detail']) : '';
       throw ApiException(
@@ -134,9 +159,12 @@ class ApiService {
       _post('/user_language', body: {'lang': code});
 
   // --- History ------------------------------------------------------------
-  Future<List<VisitorEvent>> history({int limit = 50}) async {
+  Future<List<VisitorEvent>> history({int limit = 50, String q = ''}) async {
     try {
-      final r = await _dio.get('/history', queryParameters: {'limit': limit});
+      final r = await _dio.get('/history', queryParameters: {
+        'limit': limit,
+        if (q.trim().isNotEmpty) 'q': q.trim(),
+      });
       if (r.statusCode != 200) {
         throw ApiException('Could not load history (${r.statusCode}).');
       }
@@ -195,9 +223,57 @@ class ApiService {
   }
 
   // --- Mode ---------------------------------------------------------------
-  Future<String> getMode() async => asStr((await _get('/mode'))['mode'], 'both');
-  Future<String> setMode(String mode) async =>
-      asStr((await _post('/mode', body: {'mode': mode}))['mode'], mode);
+  // When [deviceId] is set, /mode carries it so this phone gets its OWN mode
+  // (Phase 17 per-device modes) instead of moving the household default. The
+  // server echoes the mode that actually applies to this device.
+  Future<String> getMode() async {
+    final m = await _get('/mode',
+        query: deviceId.isEmpty ? null : {'device': deviceId});
+    return asStr(m['mode'], 'both');
+  }
+
+  Future<String> setMode(String mode) async {
+    final body = <String, dynamic>{'mode': mode};
+    if (deviceId.isNotEmpty) body['device'] = deviceId;
+    return asStr((await _post('/mode', body: body))['mode'], mode);
+  }
+
+  /// Drop this device's override so it follows the household default again.
+  /// No-op on servers without per-device support; returns the applied mode.
+  Future<String> clearDeviceMode() async {
+    if (deviceId.isEmpty) return getMode();
+    try {
+      final r = _okMap(await _dio.delete('/mode',
+          queryParameters: {'device': deviceId}));
+      return asStr(r['mode'], 'both');
+    } catch (e) {
+      if (e is ApiException) rethrow;
+      _fail(e);
+    }
+  }
+
+  /// Canned one-tap replies from the server (Phase 17). Falls back to a small
+  /// built-in set if the server is older or the call fails, so the UI is never
+  /// empty.
+  Future<List<String>> quickReplies() async {
+    try {
+      final m = await _get('/quick_replies');
+      final list = (m['replies'] as List?)
+              ?.map((e) => e.toString())
+              .where((s) => s.trim().isNotEmpty)
+              .toList() ??
+          const <String>[];
+      if (list.isNotEmpty) return list;
+    } catch (_) {
+      // fall through to defaults
+    }
+    return const [
+      "I'll be right there",
+      'Please leave it at the door',
+      "Sorry, I'm not available",
+      'Who is it?',
+    ];
+  }
 
   // --- Voices -------------------------------------------------------------
   Future<({List<VoiceOption> voices, String current})> voices() async {

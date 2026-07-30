@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/theme.dart';
@@ -15,6 +17,8 @@ class PrefsService {
   static const _kTheme = 'theme_choice';
   static const _kConfigured = 'configured';
   static const _kWakeWord = 'wakeword_enabled';
+  static const _kToken = 'auth_token';
+  static const _kDeviceId = 'device_id';
 
   /// First-run default — a common LAN guess. The user confirms/edits it in the
   /// Settings first-run panel.
@@ -33,10 +37,34 @@ class PrefsService {
   /// True once the user has explicitly saved a server URL at least once.
   bool get isConfigured => _prefs.getBool(_kConfigured) ?? false;
 
+  /// Bearer token matching the server's ACCESSAI_TOKEN (Phase 17). Empty when
+  /// the server runs open (no auth). Sent on every request when set.
+  String get authToken => (_prefs.getString(_kToken) ?? '').trim();
+  Future<void> setAuthToken(String token) =>
+      _prefs.setString(_kToken, token.trim());
+
   String get mode => _prefs.getString(_kMode) ?? 'both';
   Future<void> setMode(String mode) => _prefs.setString(_kMode, mode);
 
-  /// On-device "hey jarvis" always-on wake word. OFF by default: an open mic is
+  /// A stable per-install id sent as `device` on /mode so this phone can carry
+  /// its OWN accessibility mode (e.g. Deaf) while another device stays on the
+  /// household default (Phase 17 per-device modes). Generated once, then
+  /// persisted; opaque to the server. No extra dependency — derived from time
+  /// plus a random suffix, which is unique enough for a handful of home devices.
+  String get deviceId {
+    var id = (_prefs.getString(_kDeviceId) ?? '').trim();
+    if (id.isEmpty) {
+      final rnd = Random();
+      final suffix = List.generate(6,
+          (_) => rnd.nextInt(36).toRadixString(36)).join();
+      id = 'dev-${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}'
+          '-$suffix';
+      _prefs.setString(_kDeviceId, id); // fire-and-forget persist
+    }
+    return id;
+  }
+
+  /// On-device "hey access" always-on wake word. OFF by default: an open mic is
   /// a battery + privacy choice the user opts into. Persisted so the background
   /// listener resumes on next launch.
   bool get wakeWordEnabled => _prefs.getBool(_kWakeWord) ?? false;
