@@ -1,8 +1,15 @@
-# AccessAI - Phase 1 (Foundation) dependencies.
-# Target: Python 3.12, Linux, CPU-only.
-# Install with:
+# AccessAI dependencies. Target: Python 3.12, Linux, CPU-only.
+#
+# INSTALL WITH THE SCRIPT, NOT WITH PIP DIRECTLY:
 #   python3 -m venv .venv && source .venv/bin/activate
-#   pip install -r requirements.txt
+#   ./scripts/install_deps.sh
+#
+# This file alone does NOT reproduce a working environment: kokoro-onnx (the
+# natural offline voice) must be installed with --no-deps, which a requirements
+# file cannot express - see the Phase 11 block below. install_deps.sh does that
+# step, applies constraints.txt (the hard torch/numpy/onnxruntime pins), and
+# then verifies YOLO still detects. `pip install -r requirements.txt` on its own
+# leaves the doorbell speaking in the robotic espeak fallback voice.
 
 # --- Vision / frames ---
 opencv-python==4.10.0.84
@@ -79,7 +86,10 @@ silero-vad==5.1        # if this errors, load silero via torch.hub in code inste
 # is torch-independent. Pin it and re-verify YOLO after installing.
 #   DELIBERATELY AVOIDED: torchreid (pulls/forces a different torch -> broke YOLO
 #   in testing). Use the ONNX/onnxruntime path instead - same ReidModule interface.
-scikit-learn==1.5.2
+# Pin reconciled 2026-07-30: the working env had drifted to 1.9.0 while this
+# file still said 1.5.2. 1.9.0 is what the DBSCAN auto-enroll tests pass on, and
+# it needs only numpy>=1.24.1, so it sits happily under the 1.26.4 pin.
+scikit-learn==1.9.0
 
 # --- Wake word + voice commands (Phase 10) ---
 # TORCH SAFETY: openWakeWord is a pure-Python CPU detector that runs its
@@ -145,6 +155,15 @@ phonemizer-fork>=3.3.2
 # it is torch-free, so it does not affect the torch 2.4.1 pin.
 pytest==9.1.1
 httpx==0.28.1
+
+# --- Optional extras (NOT installed by default) ---
+# google-auth: only needed to mint the OAuth2 token for FCM HTTP-v1 background
+# push (config.ENABLE_PUSH). Background alerts on the phone currently use the
+# LOCAL path instead - an Android foreground service holding the LAN WebSocket,
+# no cloud involved - so this stays optional. If you later enable FCM:
+#   pip install -c constraints.txt google-auth
+# Without it, server.py logs one hint and keeps storing tokens; the doorbell is
+# never delayed or broken by its absence.
 
 # ---------------------------------------------------------------------------
 # Dependencies LATER phases add (kept here as a map; do NOT install yet)

@@ -1,0 +1,19 @@
+# AccessAI - HARD PINS. Nothing may move these, ever.
+#
+# The whole ML stack sits on torch 2.4.1. A careless install has silently
+# broken YOLO before (Phase 7: predict() returned 0 detections with NO error),
+# and MiniFASNet/insightface are equally sensitive to the numpy/onnxruntime
+# pair. Passing this file as `-c constraints.txt` to ANY pip command makes such
+# a downgrade/upgrade impossible - pip fails loudly instead of silently
+# rewriting the stack.
+#
+# Usage (see scripts/install_deps.sh, which does this for you):
+#   pip install -r requirements.txt -c constraints.txt
+#   pip install -c constraints.txt <any-new-package>
+#
+# Verified working set (2026-07-30): YOLO bus.jpg -> {bus:1, person:4, stop sign:1}
+torch==2.4.1
+torchvision==0.19.1
+torchaudio==2.4.1
+numpy==1.26.4
+onnxruntime==1.18.1

@@ -117,12 +117,19 @@ def _validate_onnx(path: str) -> bool:
             _log(f"REJECT {os.path.basename(path)}: input is {h}x{w}, "
                  "reid_module feeds 256x128")
             return False
-        dummy = np.zeros((1, 3, h, w), dtype=np.float32)
+        # Batch: several public OSNet exports bake a FIXED batch (the mirrored
+        # osnet_x0_25_msmt17.onnx wants exactly 16) rather than a dynamic dim.
+        # reid_module tiles its single crop to match, so honour it here too -
+        # rejecting the file would strand the user on the colour histogram.
+        n = shape[0] if isinstance(shape[0], int) and shape[0] > 1 else 1
+        dummy = np.zeros((n, 3, h, w), dtype=np.float32)
         out = sess.run(None, {inp.name: dummy})[0]
-        vec = np.asarray(out).reshape(-1)
+        vec = np.asarray(out)[0].reshape(-1) if n > 1 else \
+            np.asarray(out).reshape(-1)
         if vec.shape[0] >= 128:
+            batch_note = f", fixed batch {n} (tiled at inference)" if n > 1 else ""
             _log(f"validated {os.path.basename(path)}: "
-                 f"{vec.shape[0]}-dim feature OK")
+                 f"{vec.shape[0]}-dim feature OK{batch_note}")
             return True
         _log(f"REJECT {os.path.basename(path)}: output size {vec.shape[0]} "
              "(want a >=128-dim feature vector)")

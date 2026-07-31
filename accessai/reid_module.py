@@ -66,9 +66,26 @@ class ReidModule:
             try:
                 self._sess = ort.InferenceSession(
                     model_path, providers=["CPUExecutionProvider"])
-                self._inp = self._sess.get_inputs()[0].name
+                inp0 = self._sess.get_inputs()[0]
+                self._inp = inp0.name
+                # Some public OSNet exports bake a FIXED batch size into the
+                # graph (the widely mirrored osnet_x0_25_msmt17.onnx wants
+                # exactly 16) instead of leaving the dim dynamic. We only ever
+                # embed one crop, so remember the required batch and tile the
+                # single image up to it in _embed_onnx, taking row 0 back.
+                # Rejecting such a file would mean falling back to the colour
+                # histogram, which is far worse than one wasted forward pass.
+                self._batch = 1
+                try:
+                    dim0 = inp0.shape[0]
+                    if isinstance(dim0, int) and dim0 > 1:
+                        self._batch = dim0
+                except Exception:                         # pragma: no cover
+                    pass
                 self._backend = "onnx"
-                print(f"[ReidModule] ONNX OSNet re-ID loaded: {model_path}")
+                extra = (f" (fixed batch {self._batch}; one crop is tiled)"
+                         if self._batch > 1 else "")
+                print(f"[ReidModule] ONNX OSNet re-ID loaded: {model_path}{extra}")
             except Exception as e:                        # pragma: no cover
                 print(f"[ReidModule] ONNX load failed ({e}); "
                       "falling back to histogram placeholder.")
@@ -167,6 +184,9 @@ class ReidModule:
         std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
         img = (img - mean) / std
         img = np.transpose(img, (2, 0, 1))[None, ...]   # NCHW
+        batch = getattr(self, "_batch", 1)
+        if batch > 1:                                   # fixed-batch export
+            img = np.repeat(img, batch, axis=0)
         out = self._sess.run(None, {self._inp: img})[0][0]
         v = np.asarray(out, dtype=np.float32).flatten()
         n = float(np.linalg.norm(v))
