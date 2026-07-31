@@ -146,6 +146,49 @@ def test_known_in_group_with_scene_is_named():
     assert "Three people appear to be standing near the gate." in text
 
 
+# --- The "along with and" regression (seen live on a real motion event) -----
+# A known person plus face-less companions left the describable-unknown list
+# empty while the other-count was > 0, and the roster glued the connector on
+# anyway: "Vinay is at the door, along with and 1 other person."
+
+def test_known_with_faceless_others_has_no_dangling_and():
+    """No VLM scene -> detailed roster. The companions have no faces at all,
+    so there is nothing to describe and the sentence must read cleanly."""
+    text = compose_announcement(_ev(
+        people=[Person(known=True, name="Vinay", box=(0, 0, 5, 5))],
+        extra_unknown=1, visitor_count=2))
+    assert "along with and" not in text
+    assert ", along with 1 other person." in text
+
+
+def test_known_with_many_faceless_others_pluralises():
+    text = compose_announcement(_ev(
+        people=[Person(known=True, name="Vinay", box=(0, 0, 5, 5))],
+        extra_unknown=4, visitor_count=5))
+    assert "along with and" not in text
+    assert ", along with 4 other people." in text
+
+
+def test_known_with_described_and_faceless_others_keeps_and():
+    """When there IS someone to describe, the connector is still correct."""
+    text = compose_announcement(_ev(
+        people=[Person(known=True, name="Vinay", box=(0, 0, 5, 5)),
+                Person(known=False, age=42, gender="man", box=(10, 0, 15, 5))],
+        extra_unknown=2, visitor_count=4))
+    assert "along with and" not in text
+    assert "along with an unknown man" in text
+    assert "and 2 other people." in text
+
+
+def test_known_with_only_described_others_has_no_other_clause():
+    text = compose_announcement(_ev(
+        people=[Person(known=True, name="Vinay", box=(0, 0, 5, 5)),
+                Person(known=False, age=42, gender="man", box=(10, 0, 15, 5))],
+        visitor_count=2))
+    assert "along with an unknown man" in text
+    assert "other person" not in text and "other people" not in text
+
+
 # --------------------------------------------------------------------------
 # alert_kind (Phase 17) - the per-event alert taxonomy every client keys on
 # --------------------------------------------------------------------------

@@ -1,0 +1,43 @@
+name: tests
+
+# Runs the pure-logic + storage test suite on every push and PR.
+#
+# Deliberately does NOT install the heavy ML stack (torch, onnxruntime,
+# insightface, ultralytics). Those are ~2 GB of pinned CPU wheels, they need a
+# GPU-index URL, and none of the tests in tests/ touch them: every module
+# degrades gracefully when its optional dependency is absent, which is exactly
+# the property that lets CI stay a 60-second job instead of a 15-minute one.
+#
+# The consequence is honest and worth stating: CI proves the LOGIC is correct,
+# not that the models still load. Model loading is verified by the boot
+# self-check -- `python run.py` prints a status block for all 10 modules and
+# reports which are running real weights vs. a fallback. Run that before a demo.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install test dependencies
+        # Only what the tests actually import. sqlalchemy backs the Database
+        # layer; fastapi/httpx back the endpoint tests; numpy is used by the
+        # pure-logic re-ID and motion tests.
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest sqlalchemy fastapi httpx numpy python-dotenv
+
+      - name: Run tests
+        run: python -m pytest tests/ -q
