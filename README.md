@@ -7,11 +7,11 @@
 *A normal doorbell only says "someone is here." AccessAI perceives the visitor on your behalf and communicates through the sense you have.*
 
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Phases](https://img.shields.io/badge/Phases-10%2F10%20complete-2ea44f)](#what-it-does-phases-110)
-[![Languages](https://img.shields.io/badge/Languages-11-orange)](#what-it-does-phases-110)
+[![Phases](https://img.shields.io/badge/Phases-17%2F17%20complete-2ea44f)](#what-it-does-phases-117)
+[![Languages](https://img.shields.io/badge/Languages-11-orange)](#what-it-does-phases-117)
 [![Tests](https://img.shields.io/badge/tests-pytest-0A9EDC?logo=pytest&logoColor=white)](#testing)
-[![Vision](https://img.shields.io/badge/Vision-YOLOv8%20%2B%20InsightFace-blueviolet)](#what-it-does-phases-110)
-[![License](https://img.shields.io/badge/License-MIT-yellow)](#)
+[![Vision](https://img.shields.io/badge/Vision-YOLOv8%20%2B%20InsightFace-blueviolet)](#what-it-does-phases-117)
+[![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
 </div>
 
@@ -22,16 +22,18 @@
 (Deaf Mode)**, in **11 languages**, and — in Blind Mode — controllable entirely
 **hands-free by voice** ("*hey access… who is at the door?*").
 
-Built in **10 phases**, each one a working, demoable system. **This repo is
-complete through Phase 10** — every capability below is wired into a single
-event pipeline and a single dashboard.
+Built in **17 phases**, each one a working, demoable system. Phases 1–10 built
+the perception pipeline and the web dashboard; phases 11–17 added natural voice,
+multi-person scenes, photo enrollment, a native Flutter app, and LAN hardening.
+**This repo is complete through Phase 17** — every capability below is wired
+into a single event pipeline, one dashboard, and one mobile client.
 
 ---
 
 ## Table of Contents
 
 - [Quick start](#quick-start)
-- [What it does (Phases 1–10)](#what-it-does-phases-110)
+- [What it does (Phases 1–17)](#what-it-does-phases-117)
 - [Phase 10: hands-free voice + hardening](#phase-10-hands-free-voice--hardening)
 - [Configuration](#configuration)
 - [HTTP API (selected)](#http-api-selected)
@@ -39,7 +41,7 @@ event pipeline and a single dashboard.
 - [What is real vs. placeholder](#what-is-real-vs-placeholder)
 - [Two important environment notes](#two-important-environment-notes)
 - [Cloud vision keys](#cloud-vision-keys-phase-6--vlm-scene-description--ocr)
-- [Design rules](#design-rules-held-across-all-10-phases)
+- [Design rules](#design-rules-held-across-all-phases)
 
 ---
 
@@ -80,7 +82,7 @@ Then open the dashboard: **http://localhost:8000**
 
 ---
 
-## What it does (Phases 1–10)
+## What it does (Phases 1–17)
 
 | Phase | Capability | Module |
 |------:|------------|--------|
@@ -94,6 +96,13 @@ Then open the dashboard: **http://localhost:8000**
 | 8 | Multi-language translation (11 Indian/EN languages) | `translate_module` |
 | 9 | Visitor re-ID + auto-enrollment of frequent unknowns (DBSCAN) | `reid_module`, `auto_enroll` |
 | 10 | **Wake word + voice commands + hardening + ESP32/Flutter readiness** | `wakeword_module`, `voice_commands` |
+| 11 | Natural voice: Kokoro-ONNX neural TTS, with edge-tts → pyttsx3 fallback | `tts_module` |
+| 12 | Speed + rich description: instant announce, VLM enrich in the background | `pipeline`, `vlm_module` |
+| 13 | Photo enrollment from the browser (register a face without the CLI) | `server`, `face_module` |
+| 14 | Mobile PWA + installable dashboard | `web/` |
+| 15 | Multi-person scenes: per-person boxes, group announcements, `extra_unknown` | `visitor_event`, `accessibility` |
+| 16 | **Native Flutter app** — live view, history, people, voice, alerts | `mobile/` |
+| 17 | LAN hardening: bearer auth, per-IP rate limits, HMAC `/ring`, per-device modes, motion trigger, background phone alerts | `server`, `motion_module`, `mobile/` |
 
 Everything is fused onto **one object** — the `VisitorEvent` — and every output
 reads from it. Adding a capability means *filling a field*, never restructuring.
@@ -217,7 +226,7 @@ panel (`placeholder` shows amber only while the fallback is active).
 | Component | Fallback (if model files absent) | Upgrade (auto-loads, zero code change) | Status in this repo |
 |-----------|----------------------------------|----------------------------------------|---------------------|
 | **Anti-spoof** (Phase 5) | Laplacian/texture heuristic — catches obvious printed photos | Two MiniFASNet `.onnx` in `models/antispoof/` (`scripts/fetch_antispoof_models.py`) | ✅ **upgraded** — models present |
-| **Re-ID** (Phase 9) | HSV colour-histogram embedding — keys mostly on clothing colour | An OSNet `.onnx` in `models/reid/` (`scripts/fetch_reid_model.py` — download or convert an official torchreid checkpoint) | ⚠️ fallback active — run the fetch script (needs network or a local checkpoint) |
+| **Re-ID** (Phase 9) | HSV colour-histogram embedding — keys mostly on clothing colour | An OSNet `.onnx` in `models/reid/` (`scripts/fetch_reid_model.py` — download or convert an official torchreid checkpoint) | ✅ **upgraded** — `osnet_x0_25.onnx` present and loading. ⚠️ The match threshold (`REID_MATCH_THRESHOLD`) is **not yet calibrated on real doorway footage** — see the note in `config.py` |
 | **Wake word** (Phase 10) | Pretrained openWakeWord "hey jarvis" phrase | A custom **"Hey Access"** `.onnx` in `models/wakeword/`, trained fully **offline** by `scripts/train_wakeword.py` (synthetic Kokoro voices → openWakeWord embeddings → tiny classifier) | ✅ **upgraded** — `hey_access.onnx` trained + streaming-verified |
 
 **Everything else is real:** InsightFace recognition, YOLOv8 detection, the
@@ -227,6 +236,16 @@ dashboard, and the voice-command layer.
 
 Also note: **cloud VLM/OCR** (Phase 6) needs a GitHub Models PAT in `.env` to be
 active; without it the app falls back to YOLO-only signals (never blocked).
+
+**VLM key failover.** `GITHUB_MODELS_KEYS` takes a comma-separated list and the
+client rotates to the next key on quota/auth errors, so one dead key doesn't
+disable scene description. Keep the whole list on **one line** — a `.env` value
+cannot span lines, and a wrapped list silently loads only the first key (which
+looks exactly like "all keys failed" if that first key is the dead one).
+
+**TTS fallback chain.** Kokoro-ONNX (neural, offline, primary) → edge-tts
+(cloud; returns 403 on some networks) → pyttsx3 (always available). Each step
+is logged at boot and `GET /status` reports the engine actually in use.
 
 ---
 
@@ -265,7 +284,7 @@ rate-limited, the app silently uses YOLO-only signals.
 
 ---
 
-## Design rules (held across all 10 phases)
+## Design rules (held across all phases)
 
 1. **The VisitorEvent is the spine.** Fill fields; never restructure.
 2. **Central config.** All tunables + flags in `config.py`; every heavy feature

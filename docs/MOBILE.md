@@ -1,14 +1,16 @@
-# AccessAI — Mobile App Readiness (Flutter)
+# AccessAI — Mobile App (Flutter)
 
-**Status: specification only. No Flutter code is included, and none is required
-to run AccessAI.** The backend is already a clean HTTP + WebSocket API, so a
-mobile app is purely a *client* — it adds no server-side work. This document
-specifies exactly how a Flutter app maps onto the **existing** endpoints so a
-mobile developer can build it without touching the Python.
+**Status: built and complete (Phases 16–17). Not yet run on a physical Android
+device** — see the handoff checklist at the end. The app lives in `mobile/` (34
+Dart files, Riverpod) and is a pure *client*: it added no server-side work,
+because the backend was already a clean HTTP + WebSocket API.
 
 The mobile app is where the accessibility payoff lands: a blind user's phone
 speaks announcements and takes voice commands anywhere in the house; a deaf
 user's phone **vibrates + flashes + shows big text** the instant someone rings.
+
+This document is both the spec the app was built against and the guide to
+finishing it on real hardware.
 
 ---
 
@@ -119,8 +121,12 @@ user change it via `POST /mode`.
 ## Connectivity & config
 
 - The app needs the **host base URL** (e.g. `http://192.168.1.10:8000`) — a
-  simple settings field. On the same LAN this is direct; for remote access the
-  user puts the host behind a reverse proxy / VPN (out of scope here).
+  settings field. On the same LAN this is direct; for remote access the user puts
+  the host behind a reverse proxy / VPN (out of scope here).
+- **Auth (Phase 17):** if `ACCESSAI_TOKEN` is set on the server, paste it into
+  Settings → Access token. The app sends it as `Authorization: Bearer …` on HTTP
+  calls, and as `?token=…` for the MJPEG stream and the WebSocket, neither of
+  which can set a header.
 - Use a WebSocket auto-reconnect (exponential backoff) for `/events`, mirroring
   how the web dashboard reconnects.
 - All endpoints already return **clean JSON on error** (never a stack trace), so
@@ -128,19 +134,86 @@ user change it via `POST /mode`.
 
 ---
 
-## Suggested build order
+## Background alerts (Phase 17) — how it works
 
-1. **Settings + health** — enter host URL; show `GET /status` so the user can
-   confirm the backend is reachable and see which modules are live.
-2. **Live view + Ring** — MJPEG widget + `POST /ring`, render the returned event.
-3. **Event push + accessibility** — connect `/events`; implement Blind (TTS) and
-   Deaf (vibrate/flash/big-text) rendering of `announcement_text`.
-4. **History** — `GET /history` + `GET /snapshot/{id}`.
-5. **Voice commands** — record → `POST /listen` → speak `answer`; toggle
-   always-listening.
-6. **Two-way + enroll + suggestions** — `POST /reply`, `POST /enroll`,
-   `/suggestions`.
+A doorbell that only works while you are staring at the app is not a doorbell.
+This is the part of the app with real architectural weight, so the reasoning is
+recorded here rather than left in the code.
 
-No Python changes are required for any of the above. If the app later wants
-server-sent push notifications while backgrounded (FCM/APNs), that would be the
-one backend addition worth making — everything else is already exposed.
+**LAN-only, no Firebase.** The phone holds the `/events` WebSocket open itself.
+Nothing is relayed through a push service, so nothing about who visits your home
+leaves your network.
+
+**Why a foreground service.** Android freezes a backgrounded process within a
+minute or two, which kills the socket. A foreground service
+(`flutter_foreground_task`) is the sanctioned way to keep the process alive.
+Android's price for that is a **mandatory persistent notification** — the
+"AccessAI is listening" notice. That cost is unavoidable, so it is named in the
+Settings toggle's subtitle instead of being quietly imposed.
+
+**Why the socket stays in the main isolate.** The service *could* run its own
+isolate, but that isolate would need a duplicate API config, auth token, TTS
+engine, and Riverpod graph — and it would race the UI isolate into two
+notifications for one visitor. The service therefore does nothing but keep the
+main isolate alive. This is deliberate; see the class doc in
+`mobile/lib/services/background_alert_service.dart`.
+
+**Routing.** `nav_shell.dart` observes the app lifecycle. Foregrounded, an event
+takes over the screen as before. Backgrounded, it goes to the notification shade
+on a max-importance doorbell channel, which is what actually rings and vibrates
+with the app closed. A later VLM enrichment replaces the same notification id
+with `onlyAlertOnce`, so a fuller description does not buzz twice for one visitor.
+
+**Default:** ON. Being told someone is at the door is the product.
+
+---
+
+## On-device handoff checklist
+
+Everything below is verified by construction only. No Android device was attached
+during development, so these are the steps that still need a real phone.
+
+**Build**
+1. `cd mobile && flutter pub get`
+2. `flutter build apk --release`
+3. Confirm the **merged** manifest kept the typed service — Android 14+ rejects an
+   untyped one at runtime:
+   ```
+   grep foregroundServiceType \
+     build/app/intermediates/merged_manifests/release/AndroidManifest.xml
+   ```
+   Expect `android:foregroundServiceType="dataSync"`. If it is missing, add it
+   with a `tools:node="merge"` override rather than hand-declaring a fresh
+   `<service>` — `flutter_foreground_task` supplies its own, and a mismatched
+   class name fails the merge.
+
+**First run**
+4. Enter the host URL in Settings; the health screen should go green.
+5. Grant the notification permission when prompted. If it is denied, the
+   background-alerts toggle refuses to switch on and says why — that is intended,
+   not a bug: a foreground service with no postable notification would show the
+   mandatory notice and then alert nothing.
+6. Accept the battery-optimisation exemption prompt. On aggressive OEM skins
+   (MIUI in particular) an unexempted service is killed within minutes, and the
+   symptom is the worst possible one — alerts that work in testing and stop
+   silently later.
+
+**The tests that matter**
+7. App **fully closed**, ring the doorbell → the phone rings and vibrates, and
+   the notification carries `announcement_text`.
+8. Wait for the VLM enrichment → the *same* notification updates with the fuller
+   description, without a second buzz.
+9. Reboot the phone, do not open the app, ring → still alerts (the boot receiver
+   restarted the service).
+10. Leave it overnight, ring in the morning → still alerts. This is the one that
+    catches OEM battery killers, and it cannot be shortened.
+11. **Deaf Mode:** confirm vibration and flash fire with the screen off, and that
+    nothing depends on hearing the notification sound.
+12. **Blind Mode:** confirm the phone speaks the announcement and that
+    push-to-talk round-trips through `POST /listen`.
+
+**With auth enabled**
+13. Paste the `ACCESSAI_TOKEN` into Settings → Access token. Confirm the MJPEG
+    live view still renders and the WebSocket still connects: both authenticate
+    via `?token=` rather than a header, so they are the two paths most likely to
+    break when auth goes on.

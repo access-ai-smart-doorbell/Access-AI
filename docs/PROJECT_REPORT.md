@@ -2,7 +2,10 @@
 
 **AI-Powered Smart Accessibility Doorbell for Blind & Deaf People**
 
-_Status as of this report: **Phase 1 complete** (software, laptop-first). Phases 2–6 pending._
+_Status as of this report: **Phases 1–17 complete** (software, laptop-first). The
+perception pipeline, web dashboard, native Flutter app, and LAN hardening are all
+built and running. What remains is **hardware** (an ESP32-CAM door unit) and
+**on-device / real-world calibration** — see §6._
 
 ---
 
@@ -17,10 +20,15 @@ actually has. It replaces the meaningless chime with a sentence like:
 - **Blind Mode** → spoken announcement + phone vibration.
 - **Deaf Mode** → large on-screen text, live captions, two-way text↔speech chat.
 
-Everything runs **locally** (privacy-first, no cloud, no subscription). Built
-entirely from free, open-source models. Prototype hardware budget < ₹5,000; the
-laptop is the AI brain during development, and a one-line config change swaps in
-an ESP32-CAM later.
+Face recognition, anti-spoofing, speech, translation, re-ID, the wake word, and TTS
+all run **locally** and offline. One capability is cloud-assisted and it is worth
+naming plainly: the Phase-6 VLM scene description and parcel OCR call GitHub
+Models, and only ever for **unknown** visitors — a recognised household member's
+face never leaves the machine. With no API key configured the system falls back to
+YOLO-only signals and is never blocked.
+
+No subscription. Prototype hardware budget < ₹5,000; the laptop is the AI brain
+during development, and a one-line config change swaps in an ESP32-CAM later.
 
 **Core novelty:** not any single model, but the accessibility-first *integration*
 of face recognition + scene understanding + speech + a conservative context
@@ -132,9 +140,11 @@ fill it in. No pipeline rework.
 
 ---
 
-## 5. What Is Built (Phase 1) — Current Code State
+## 5. What Is Built — Current Code State
 
 Location: `~/AccessAI/`
+
+### 5.1 The Phase-1 foundation
 
 | File | Role | Status |
 |---|---|---|
@@ -147,7 +157,7 @@ Location: `~/AccessAI/`
 | `accessai/vision_module.py` | YOLOv8n object detection | ✅ Done |
 | `accessai/context_engine.py` | Fuses signals → VisitorEvent + rule-based intent | ✅ Done |
 | `accessai/accessibility.py` | Composes announcement, routes Blind/Deaf | ✅ Done |
-| `accessai/tts_module.py` | Piper → pyttsx3 fallback | ✅ Done |
+| `accessai/tts_module.py` | Kokoro-ONNX → edge-tts → pyttsx3 (see §5.3) | ✅ Done |
 | `accessai/database.py` | SQLite via SQLAlchemy (events, faces, reid, clusters) | ✅ Done |
 | `accessai/pipeline.py` | End-to-end runner; honours skip-VLM-for-known | ✅ Done |
 | `accessai/server.py` | FastAPI + WebSocket + MJPEG stream | ✅ Done |
@@ -178,37 +188,104 @@ Location: `~/AccessAI/`
 
 ---
 
-## 6. Remaining Work (Phases 2–6)
+### 5.2 Phases 2–17, as built
 
-### Phase 2 — Safety & richness
-- `antispoof.py` — Silent-Face-Anti-Spoofing (ONNX, CPU). Runs before
-  recognition; `spoof_score < ANTISPOOF_MIN_SCORE` → treat as Unknown.
-- `vlm_module.py` — Moondream/SmolVLM (transformers or Ollama). **Unknowns
-  only.** Returns short scene description. Fallback = YOLO-only description.
-- `ocr_module.py` — PaddleOCR on parcel-like crops → courier keyword match.
-- Flip `ENABLE_ANTISPOOF`, `ENABLE_VLM`, `ENABLE_OCR` in `config.py`.
+Each phase below is wired into the same pipeline and the same `VisitorEvent`. The
+column that matters is the last one: what is running **real weights** versus a
+documented fallback.
 
-### Phase 3 — Speech + multi-language
-- `speech_module.py` — Silero VAD gate + Whisper transcription.
-- `translate_module.py` — langdetect + IndicTrans2/NLLB → user's language.
-- Multilingual TTS voice; Deaf-Mode 2-way reply already stubbed (`/reply`).
-- Flip `ENABLE_SPEECH`.
+| Phase | Capability | Module | Real or fallback |
+|------:|------------|--------|------------------|
+| 2 | Face recognition, InsightFace/ArcFace `buffalo_l`, cosine match | `face_module` | real |
+| 3 | YOLOv8n object detection + conservative intent fusion | `vision_module`, `context_engine` | real |
+| 4 | TTS + Blind/Deaf/Both routing + two-way reply | `accessibility`, `tts_module` | real |
+| 5 | Anti-spoof / liveness — a photo-of-a-face downgrades to Unknown | `antispoof_module` | real (two MiniFASNet `.onnx`) |
+| 6 | VLM scene description + parcel OCR, unknowns only, cloud | `vlm_module` | real (needs a PAT; falls back to YOLO-only) |
+| 7 | Offline speech recognition, Whisper + Silero VAD | `speech_module` | real |
+| 8 | Translation across 11 Indian/EN languages | `translate_module` | real |
+| 9 | Visitor re-ID + DBSCAN auto-enrollment of frequent unknowns | `reid_module`, `auto_enroll` | real (OSNet `osnet_x0_25.onnx`) — **threshold uncalibrated**, see §6 |
+| 10 | Wake word + voice commands + central `/status` health | `wakeword_module`, `voice_commands` | real (custom "hey access" `.onnx`) |
+| 11 | Natural neural voice | `tts_module` | real (Kokoro-ONNX; see §5.3) |
+| 12 | Speed: announce instantly, enrich with the VLM in the background | `pipeline`, `vlm_module` | real |
+| 13 | Photo enrollment from the browser, no CLI | `server`, `face_module` | real |
+| 14 | Installable mobile PWA dashboard | `web/` | real |
+| 15 | Multi-person scenes: per-person boxes, group announcements | `visitor_event`, `accessibility` | real |
+| 16 | Native Flutter app: live view, history, people, voice, alerts | `mobile/` | real (34 Dart files) |
+| 17 | LAN hardening: bearer auth, per-IP rate limits, HMAC `/ring`, per-device modes, motion trigger, background phone alerts | `server`, `motion_module`, `mobile/` | real |
 
-### Phase 4 — Memory & smarts
-- `reid_module.py` — OSNet (torchreid) body embeddings for repeat unknowns →
-  "same unknown visitor, 3rd time today."
-- `auto_enroll.py` — DBSCAN over unknown-face embeddings → "Save this visitor?"
+**All VisitorEvent fields these phases needed already existed in Phase 1** — every
+phase filled fields rather than restructuring the spine. That was the bet made in
+§4.1 and it held for sixteen consecutive phases.
 
-### Phase 5 — Voice control (Blind UX)
-- `wakeword_module.py` — openWakeWord always-listening + intent parser
-  ("who is at the door", "open camera").
+### 5.3 Two fallback chains worth knowing
 
-### Phase 6 — Hardware & mobile
-- Set `CAMERA_SOURCE` to ESP32-CAM MJPEG URL; add `/ring` webhook for the
-  physical button. ESP32-S3 Sense (has mic) recommended.
-- Flutter app consuming the same FastAPI backend.
+**TTS:** Kokoro-ONNX (neural, offline, primary) → edge-tts (cloud; returns 403 on
+some networks) → pyttsx3 (system `espeak`, always available). Each step is logged
+at boot and `GET /status` reports the engine actually in use.
 
-**All VisitorEvent fields for these phases already exist** — wiring only.
+**Cloud VLM keys:** `GITHUB_MODELS_KEYS` takes a comma-separated list and the
+client rotates to the next key on a quota or auth error, so one dead key does not
+disable scene description. The list must stay on **one line** — a `.env` value
+cannot span lines, and a wrapped list silently loads only the first key, which
+looks exactly like "all keys failed" when that first key is the dead one.
+
+### 5.4 Background phone alerts (LAN-only, no Firebase)
+
+The Flutter app holds the `/events` WebSocket open itself. Android freezes a
+backgrounded process within a minute or two, so a foreground service
+(`flutter_foreground_task`) keeps the **main** isolate alive, and
+`flutter_local_notifications` posts the alert on a max-importance doorbell
+channel. The socket is deliberately **not** moved into the service's own isolate:
+that would need a duplicate API config, token, TTS, and Riverpod graph, and would
+race the UI isolate into double notifications.
+
+The cost is honest and visible: Android forces a persistent "AccessAI is
+listening" notice, so the toggle to turn it off lives in Settings rather than
+buried in system settings. Nothing leaves the LAN.
+
+---
+
+## 6. Remaining Work
+
+The software is complete. What is left is physical and empirical — the two kinds
+of work that cannot be done from a laptop alone.
+
+### 6.1 Hardware: the ESP32-CAM door unit
+All frames go through `accessai/camera.py`, and OpenCV's `VideoCapture` accepts an
+int index *or* an MJPEG URL, so the swap is one line in `config.py`:
+
+```python
+CAMERA_SOURCE = "http://192.168.1.50:81/stream"
+```
+
+Firmware and bring-up are in **[HARDWARE.md](HARDWARE.md)**. `POST /ring` is the
+webhook for the physical button and accepts an optional posted JPEG. ESP32-S3
+Sense is recommended over a plain ESP32-CAM because it has a microphone, which
+Phase 7's speech pipeline needs at the door rather than at the laptop.
+
+### 6.2 Calibration on real doorway footage
+`REID_MATCH_THRESHOLD` is currently **0.90** and is not calibrated. This is not a
+guessed number but it is an unvalidated one: OSNet features are post-ReLU, so
+every dimension is ≥ 0 and the cosine similarity between two *unrelated* crops
+sits around 0.6 by construction. A threshold that looks conservative on paper can
+still merge two strangers, or split one visitor across two identities. It needs a
+day of real footage at the actual door, at the actual mounting height, in the
+actual light.
+
+### 6.3 On-device verification (Android)
+No Android device has been attached during development, so the Flutter app's
+background behaviour is verified by construction, not by observation. The handoff
+checklist is in **[MOBILE.md](MOBILE.md)**: confirm the merged manifest carries
+`android:foregroundServiceType="dataSync"` (Android 14+ requires a typed service),
+grant the battery-optimisation exemption on OEM skins that kill unexempted
+services, and confirm an event with the app fully closed both rings and vibrates.
+
+### 6.4 Enabling LAN auth
+Auth ships **off** so a first run works without ceremony, and the server says so
+loudly at boot. Turning it on is two secrets in `.env` (`ACCESSAI_TOKEN`,
+`ACCESSAI_RING_SECRET`) and narrowing `CORS_ORIGINS` off the `["*"]` wildcard. The
+Flutter app already has an "Access token" field in Settings, so no rebuild is
+needed for this.
 
 ---
 
@@ -217,57 +294,110 @@ Location: `~/AccessAI/`
 - **Vision/camera:** OpenCV
 - **Face:** InsightFace (ArcFace `buffalo_l`) + onnxruntime
 - **Objects:** Ultralytics YOLOv8n
-- **Scene (Phase 2):** Moondream / SmolVLM (optionally via Ollama)
-- **OCR (Phase 2):** PaddleOCR
-- **Speech (Phase 3):** OpenAI Whisper + Silero VAD
-- **Translate (Phase 3):** IndicTrans2 / NLLB
-- **Re-ID (Phase 4):** OSNet (torchreid); DBSCAN (scikit-learn)
-- **Wake word (Phase 5):** openWakeWord
-- **TTS:** pyttsx3 (Piper optional, manual install)
+- **Anti-spoof:** MiniFASNet ×2 (ONNX, CPU)
+- **Scene + OCR:** GitHub Models `gpt-4o` (OpenAI-compatible), unknowns only
+- **Speech:** OpenAI Whisper + Silero VAD (offline)
+- **Translate:** 11 Indian/EN languages
+- **Re-ID:** OSNet `osnet_x0_25.onnx`; DBSCAN (scikit-learn)
+- **Wake word:** openWakeWord, custom "hey access" model trained offline by
+  `scripts/train_wakeword.py` (synthetic Kokoro voices → openWakeWord embeddings
+  → a small classifier)
+- **TTS:** Kokoro-ONNX → edge-tts → pyttsx3
 - **Backend:** Python + FastAPI + WebSockets + uvicorn
 - **DB:** SQLite (SQLAlchemy)
-- **App (later):** Flutter + Firebase Cloud Messaging
-- **Door unit (later):** ESP32-S3/ESP32-CAM, MJPEG streaming
+- **App:** Flutter (Riverpod, dio, web_socket_channel, speech_to_text,
+  flutter_tts) + `flutter_foreground_task` / `flutter_local_notifications`.
+  **No Firebase** — alerts are LAN-only by design (§5.4).
+- **Door unit (pending):** ESP32-S3/ESP32-CAM, MJPEG streaming
+
+### 7.1 The pinned stack — do not float these
+
+torch 2.4.1+cu121, torchvision 0.19.1+cu121, torchaudio 2.4.1, numpy 1.26.4,
+onnxruntime 1.18.1. A careless upgrade once broke YOLO **silently** — zero
+detections, no error, no traceback. openWakeWord is installed `--no-deps`
+specifically so it cannot drag torch off the pin.
+
+The verification ritual after any dependency change is: confirm the pins are
+unchanged, then run `YOLO('yolov8n.pt').predict('bus.jpg')` and check it returns
+`{bus: 1, person: 4, stop sign: 1}` at default confidence. A silent regression is
+the failure mode here, so the check has to be a positive assertion about output,
+not the absence of an error. `scripts/install_deps.sh` plus `constraints.txt`
+exist to make the install reproducible rather than a matter of luck.
 
 ---
 
 ## 8. Known Issues & Environment Notes
 
-- **Python 3.12 + Piper:** `piper-tts` needs `piper-phonemize`, which has **no
-  3.12 wheel**. It was removed from `requirements.txt`; `pyttsx3` is the active
-  TTS. This is why the first `pip install` aborted (one bad dep kills the whole
-  resolve). To use Piper later, install its binary + a voice file manually.
+- **Piper was dropped.** `piper-tts` needs `piper-phonemize`, which has no Python
+  3.12 wheel, and one unresolvable dep aborts the entire `pip install`. Kokoro-ONNX
+  replaced it in Phase 11 and is better anyway (neural, offline, no build step).
 - **pyttsx3 on Linux** needs `espeak`: `sudo apt install -y espeak alsa-utils`.
-- **First run is heavy:** torch (~2 GB), InsightFace model (~300 MB), YOLO
-  weights, all download once.
-- **Webcam:** on native Linux `CAMERA_SOURCE = 0`. If no `/dev/video*`, use a
-  phone IP-camera app and point `CAMERA_SOURCE` at its URL (same trick as ESP32).
+  It is the last fallback, so if it is missing the chain has no floor.
+- **edge-tts returns 403 on some networks.** Expected; the chain drops to pyttsx3
+  and `/status` reports which engine is live.
+- **First run is heavy:** torch (~2 GB), InsightFace `buffalo_l` (~300 MB), YOLO
+  weights, Whisper, Kokoro — all download once.
+- **Webcam:** on native Linux `CAMERA_SOURCE = 0`. If there is no `/dev/video*`,
+  point `CAMERA_SOURCE` at a phone IP-camera app's URL — the same mechanism the
+  ESP32 will use, so it is a genuine rehearsal rather than a workaround.
+- **Anti-spoof takes raw 0-255 pixels, not normalised.** MiniFASNet was trained
+  that way; dividing by 255 makes it flag every real face as a photo.
 
 ---
 
-## 9. Testing & Verification Plan
+## 9. Testing & Verification
 
-**Phase 1 (do now):**
-1. Add `data/known_faces/YourName/1.jpg`, restart → log shows loaded face.
-2. Ring → announcement includes your name; TTS speaks it.
-3. Remove photo → Ring → "unknown visitor."
-4. Hold a bag/box → announcement mentions carried object.
-5. Type in reply box → laptop speaks it.
-6. History list shows events with snapshots.
+### 9.1 Automated
+`python -m pytest tests/ -q` — the suite covers the accessibility text composer
+(the module that decides what the user actually hears), the SQLite storage layer,
+and the Phase-17 security middleware: auth accepted via `Authorization: Bearer`
+and via `?token=` (the MJPEG `<img>` and the WebSocket cannot set headers), token
+prefixes rejected, public UI paths still reachable, and the per-IP token bucket's
+burst, isolation, and refill.
 
-**Later phases:** hold a phone-photo of a face → caught as spoof (P2); parcel
-label → courier read (P2); speak Hindi → translated announcement (P3); same
-stranger twice → "seen ×2" (P4); "Hey Access, who's at the door?" (P5).
+CI (`.github/workflows/tests.yml`) runs on push and PR. It deliberately installs
+**only** the light dependencies, not the ~2 GB ML stack, which keeps it under a
+minute — but that means **CI proves the logic is correct, not that the models
+still load.** Model loading is verified by the boot self-check: `python run.py`
+prints a status block for all 10 modules and reports which are running real
+weights versus a fallback.
+
+### 9.2 Manual, on the running system
+1. Add `data/known_faces/YourName/1.jpg`, restart → boot log shows the face
+   loaded; Ring → the announcement uses your name.
+2. Remove the photo → Ring → "unknown visitor."
+3. Hold a box → the announcement mentions the carried object.
+4. **Hold a phone showing a photo of a face → caught as a spoof** and downgraded
+   to Unknown. This is the security-critical one.
+5. Speak Malayalam or Hindi at the camera → transcribed and translated.
+6. The same stranger twice → "seen ×2".
+7. Say "hey access, who's at the door?" → spoken answer, no touch.
+8. Type in the reply box (Deaf Mode) → the laptop speaks it at the door.
+9. History lists events with snapshots and is searchable by name and date.
+
+### 9.3 Not yet verified
+Every item in §6: the ESP32 unit does not exist yet, the re-ID threshold has not
+met real footage, and the Android background alert path has not run on a physical
+phone. These are stated as open rather than assumed to work.
 
 ---
 
 ## 10. Ethics & Privacy
 
-- Local processing — images/audio never leave the home.
+- **Local by default, with one stated exception.** All face, speech, translation,
+  re-ID, wake-word, and TTS processing is on-device. The VLM scene description
+  (Phase 6) is a cloud call, made **only for unknown visitors** — a recognised
+  household member is never uploaded. Turning off `ENABLE_VLM` makes the system
+  fully local at the cost of richer descriptions.
+- **Phone alerts never leave the LAN.** No Firebase, no push service, no relay:
+  the phone connects directly to the doorbell over the local network (§5.4).
 - DB stores face **embeddings**, not raw photos.
 - Non-registered faces can be blurred in stored footage (future).
 - System is explicit about uncertainty ("likely," never fact).
 - Recording is trigger-based, not continuous surveillance.
+- **Auth ships off and says so.** The server prints a loud warning at boot when it
+  is LAN-reachable without a token. Silence there would be the real ethical
+  failure; a warning the user can act on is not.
 
 ---
 
