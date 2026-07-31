@@ -64,11 +64,23 @@ PORT = 8000
 # boot self-check and /status warn loudly when the server is reachable beyond
 # localhost with auth off.
 AUTH_TOKEN = os.environ.get("ACCESSAI_TOKEN", "").strip()
-# CORS: with auth off we keep the permissive wildcard ONLY for reads; mutating
-# routes are same-origin + Flutter (no Origin header). With a token set, CORS
-# hardly matters (the token gates everything), so the wildcard stays for dev
-# convenience. Override to lock to specific origins, e.g. ["http://localhost"].
-CORS_ORIGINS = ["*"]
+# CORS: which *browser origins* may call the API cross-origin. This does NOT
+# affect the dashboard/PWA (served by this server, so same-origin) or the
+# Flutter mobile app (a native client - it sends no Origin header and CORS
+# never applies). It only governs a page on some OTHER origin scripting this
+# server, which is exactly the drive-by risk on a shared LAN.
+#
+# Default is the dev origins for `flutter run -d chrome` plus localhost. Widen
+# it with a comma-separated env var if you serve a UI from elsewhere:
+#     ACCESSAI_CORS_ORIGINS=http://192.168.1.20:3000,http://myhost:8080
+# Setting it to "*" restores the old wildcard (fine with AUTH_TOKEN set, since
+# the token gates every route and allow_credentials stays False - but with auth
+# OFF the wildcard lets any page on the LAN drive your camera and mic).
+_cors_env = os.environ.get("ACCESSAI_CORS_ORIGINS", "").strip()
+CORS_ORIGINS = ([o.strip() for o in _cors_env.split(",") if o.strip()]
+                if _cors_env else
+                ["http://localhost", "http://localhost:8000",
+                 "http://127.0.0.1", "http://127.0.0.1:8000"])
 # Rate limit for the pipeline-driving routes (/trigger, /ring, /ask, /listen,
 # /hear_visitor): each call can burn CPU and a paid cloud VLM request. Token
 # bucket per client IP: burst of RATE_BURST, refilling RATE_PER_MIN per minute.
@@ -109,7 +121,7 @@ QUICK_REPLIES = [
 # Visitor" press needed. Opt-in: it records a stranger's voice automatically,
 # which is a privacy decision the user must make (the spoken prompt itself
 # announces the recording). Known visitors are never auto-interrogated.
-ENABLE_AUTO_GREETING = False
+ENABLE_AUTO_GREETING = True
 AUTO_GREETING_TEXT = ("Hello. The resident will be with you shortly. "
                       "Please state your name and the purpose of your visit "
                       "after the tone.")
@@ -155,10 +167,13 @@ ENABLE_TRANSLATE = True    # Phase 8  - multi-language translation  (LIVE)
 ENABLE_REID = True         # Phase 9  - visitor re-identification  (LIVE)
 ENABLE_AUTOENROLL = True    # Phase 9  - auto-enrollment of frequent unknowns  (LIVE)
 ENABLE_WAKEWORD = True     # Phase 10 - wake word + voice commands  (LIVE)
-ENABLE_MOTION = False      # Phase 17 - software motion trigger (trigger='motion').
-                           #   OFF by default: motion rings the FULL pipeline, so
-                           #   it belongs on a doorway camera, not a desk webcam
-                           #   (a laptop camera would fire on every passer-by).
+ENABLE_MOTION = True       # Phase 17 - software motion trigger (trigger='motion').
+                           #   ON: the doorbell notices someone approaching instead
+                           #   of waiting for a button press. NOTE this rings the
+                           #   FULL pipeline, so it belongs on a doorway camera - on
+                           #   a desk webcam it will fire on every passer-by. Set
+                           #   back to False (or raise MOTION_MIN_AREA) if you are
+                           #   developing in front of the camera.
 
 # Software motion detector tuning (accessai/motion_module.py). The detector
 # samples the shared latest-frame a few times a second and fires when at least
@@ -404,10 +419,25 @@ HISTORY_LIMIT = 200        # max events shown on the history page
 REID_BACKEND = "auto"
 REID_MODEL_DIR = os.path.join(BASE_DIR, "models", "reid")
 # Cosine similarity (dot of L2-normalised vectors) at/above which two sightings
-# are called the SAME person. Histogram appearance vectors are less separable than
-# a deep re-ID model, so 0.75 is a deliberately cautious default - RAISE it to
-# merge fewer (stricter), LOWER it to merge more.
-REID_MATCH_THRESHOLD = 0.75
+# are called the SAME person. RAISE it to merge fewer (stricter), LOWER to merge
+# more.
+#
+# 0.90, not the old 0.75, because the OSNet feature is taken AFTER the final
+# ReLU: every dimension is >= 0, so two unrelated crops already sit around
+# 0.6 cosine by construction. On the 33 dev snapshots (desk webcam) unrelated
+# people scored a median 0.59 and a max 0.91, so 0.75 would have merged most
+# strangers into one identity. The error this setting prefers is "a new
+# stranger" (harmless - the announcement just says first visit) over "the same
+# visitor again" (actively wrong).
+#
+# NOT YET CALIBRATED ON REAL FOOTAGE. OSNet is trained on full-body crops with a
+# ~2:1 height:width aspect; the dev webcam only ever produced upper-torso crops
+# at ~0.72, which is out of distribution, and on that data the model could not
+# separate two known people at all (AUC ~0.45, i.e. chance). That is a property
+# of the sample, not a bug - it is the doorway camera (ESP32-CAM, full-body
+# framing) this model is for. Re-tune on a day of real doorway snapshots before
+# trusting the "seen N times today" count.
+REID_MATCH_THRESHOLD = 0.90
 # Only match against sightings seen within this window; also defines "today" for
 # the "N times today" announcement and bounds how long a stranger is remembered.
 REID_GALLERY_TTL_HOURS = 24
