@@ -408,7 +408,11 @@ def main() -> None:
         wakeword.set_on_wake(_on_wake)
         if config.WAKEWORD_ALWAYS_ON:
             wakeword.start()
-            print(f"[AccessAI] Voice: ALWAYS-ON - say '{config.WAKEWORD_MODEL}' "
+            # Say the phrase that is ACTUALLY loaded, not config.WAKEWORD_MODEL --
+            # that setting is only the pretrained fallback, so whenever a custom
+            # .onnx was picked up the banner told the user the wrong words.
+            phrase = wakeword.model_name_str().replace("_", " ")
+            print(f"[AccessAI] Voice: ALWAYS-ON - say '{phrase}' "
                   f"then your command. (also: push-to-talk /listen)")
         else:
             print("[AccessAI] Voice: PUSH-TO-TALK (/listen). Always-on is OPT-IN "

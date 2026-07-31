@@ -251,10 +251,15 @@ def _multi_who(ev, compact=False):
         # with the verb); each one's clothing/mood follows as its own sentence.
         verb = "is" if len(names) == 1 else "are"
         s = f"{_join_list(names)} {verb} at the door"
-        if described or others:
-            s += ", along with " + _join_list(described)
-            if others:
-                s += (", and " if described else "and ") + _others_clause()
+        # Build the "along with ..." tail as ONE string first. Composing it
+        # in-place used to emit "along with and 1 other person" whenever the
+        # unknowns had no describable faces (described empty, others > 0),
+        # because _join_list([]) is "" and the "and" was appended regardless.
+        tail = _join_list(described)
+        if others:
+            tail = f"{tail}, and {_others_clause()}" if tail else _others_clause()
+        if tail:
+            s += ", along with " + tail
         s += "."
         sentences.append(s)
         for p in known_unique:                            # Phase 16 per-known detail
