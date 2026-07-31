@@ -266,6 +266,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 Entrance(index: 4, child: _themeSelector(themeChoice)),
 
                 const SizedBox(height: T.s20),
+                Entrance(index: 5, child: _section('Alerts')),
+                Entrance(index: 5, child: const _BackgroundAlertsCard()),
+
+                const SizedBox(height: T.s20),
                 Entrance(index: 5, child: _section('Accessibility status')),
                 Entrance(
                   index: 5,
@@ -555,6 +559,77 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Background doorbell alerts: keeps the LAN /events socket open with the app
+/// closed so the phone still rings. Everything stays on the LAN -- no Firebase,
+/// no cloud relay. Android requires a visible persistent notice while the
+/// service runs, so the switch names that cost up front instead of surprising
+/// the user with a notification they can't explain.
+class _BackgroundAlertsCard extends ConsumerWidget {
+  const _BackgroundAlertsCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final on = ref.watch(backgroundAlertsProvider);
+    final text = Theme.of(context).textTheme;
+    final cs = Theme.of(context).colorScheme;
+    return GlassCard(
+      child: Semantics(
+        toggled: on,
+        label: 'Alert me when the app is closed',
+        child: Row(
+          children: [
+            Icon(on ? Icons.notifications_active : Icons.notifications_off,
+                color: on ? cs.primary : cs.onSurfaceVariant),
+            const SizedBox(width: T.s12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Alert me when the app is closed',
+                      style: text.titleMedium),
+                  const SizedBox(height: 2),
+                  Text(
+                    on
+                        ? 'The doorbell rings this phone even when AccessAI '
+                            'is closed. Stays on your local network. Android '
+                            'shows a permanent “listening” notice while this '
+                            'is on.'
+                        : 'AccessAI only alerts you while the app is open.',
+                    style:
+                        text.bodySmall?.copyWith(color: cs.onSurfaceVariant),
+                  ),
+                ],
+              ),
+            ),
+            Switch(
+              value: on,
+              onChanged: (v) async {
+                final ok = await ref
+                    .read(backgroundAlertsProvider.notifier)
+                    .setEnabled(v);
+                if (!context.mounted) return;
+                if (v && !ok) {
+                  showSnack(
+                      context,
+                      'Notification permission is needed to alert you with '
+                      'the app closed. Enable it in system settings.',
+                      error: true);
+                } else {
+                  showSnack(
+                      context,
+                      ok
+                          ? 'You’ll be alerted with the app closed'
+                          : 'Background alerts off');
+                }
+              },
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -48,6 +48,11 @@ dependencies:
   google_fonts: ^8.1.0
   sensors_plus: ^7.1.0
   shimmer: ^3.0.0
+  # Background doorbell alerts, LAN-only (no Firebase). flutter_foreground_task
+  # keeps the main isolate -- and therefore the /events WebSocket -- alive with
+  # the app closed; flutter_local_notifications posts the alert itself.
+  flutter_local_notifications: ^19.4.2
+  flutter_foreground_task: ^9.1.0
 
 dev_dependencies:
   flutter_test:

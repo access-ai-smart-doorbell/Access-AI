@@ -29,10 +29,42 @@ class NavShell extends ConsumerStatefulWidget {
   ConsumerState<NavShell> createState() => _NavShellState();
 }
 
-class _NavShellState extends ConsumerState<NavShell> {
+class _NavShellState extends ConsumerState<NavShell> with WidgetsBindingObserver {
   int _index = 0;
   bool _alertOpen = false;
   String _lastAlertedId = '';
+
+  /// Tracks foreground/background so an event can choose between the in-app
+  /// takeover and a system notification. Seeded from the binding rather than
+  /// assumed 'resumed': the app can be launched straight into the background.
+  AppLifecycleState _lifecycle = AppLifecycleState.resumed;
+
+  /// True when the user is not looking at the app, so an alert must go to the
+  /// notification shade instead of the screen.
+  bool get _backgrounded => _lifecycle != AppLifecycleState.resumed;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _lifecycle =
+        WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed;
+    // Touch the notifier so a user who left background alerts on gets the
+    // foreground service (and therefore a live socket) without visiting
+    // Settings first.
+    Future.microtask(() => ref.read(backgroundAlertsProvider));
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _lifecycle = state;
+  }
 
   static const _destinations = [
     (icon: Icons.doorbell_outlined, active: Icons.doorbell, label: 'Door'),
@@ -87,6 +119,14 @@ class _NavShellState extends ConsumerState<NavShell> {
     if (description.isEmpty) return;
     _lastEnrichedId = ev.eventId;
 
+    // Backgrounded: replace the original shade alert with the fuller VLM
+    // description (same notification id, onlyAlertOnce) rather than buzzing a
+    // second time for the same visitor.
+    if (_backgrounded) {
+      await ref.read(notificationServiceProvider).showEnriched(ev, description);
+      return;
+    }
+
     final mode = ref.read(modeProvider);
     final audio = ref.read(audioProvider);
     await audio.descriptionVibrate();
@@ -107,6 +147,16 @@ class _NavShellState extends ConsumerState<NavShell> {
     }
     if (_alertOpen || ev.eventId == _lastAlertedId) return;
     _lastAlertedId = ev.eventId;
+
+    // Backgrounded: there is no screen to take over, and speaking out of
+    // nowhere is worse than useless. The alert goes to the notification shade
+    // instead -- Android rings and vibrates it on the max-importance doorbell
+    // channel, which is what actually reaches the user with the app closed.
+    if (_backgrounded) {
+      await ref.read(notificationServiceProvider).showEvent(ev);
+      return;
+    }
+
     _alertOpen = true;
     try {
       // A leading earcon classifies the visitor before any words: the warning

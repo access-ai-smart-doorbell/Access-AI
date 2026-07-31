@@ -17,6 +17,7 @@ class PrefsService {
   static const _kTheme = 'theme_choice';
   static const _kConfigured = 'configured';
   static const _kWakeWord = 'wakeword_enabled';
+  static const _kBackgroundAlerts = 'background_alerts_enabled';
   static const _kToken = 'auth_token';
   static const _kDeviceId = 'device_id';
 
@@ -70,6 +71,16 @@ class PrefsService {
   bool get wakeWordEnabled => _prefs.getBool(_kWakeWord) ?? false;
   Future<void> setWakeWordEnabled(bool on) =>
       _prefs.setBool(_kWakeWord, on);
+
+  /// Alert on the doorbell while the app is closed. ON by default: being told
+  /// someone is at the door is the whole product, and a doorbell that only
+  /// works with the app open isn't one. The cost is honest and visible — a
+  /// persistent "AccessAI is listening" notice Android forces us to show —
+  /// so the user can turn it off here without hunting through system settings.
+  bool get backgroundAlertsEnabled =>
+      _prefs.getBool(_kBackgroundAlerts) ?? true;
+  Future<void> setBackgroundAlertsEnabled(bool on) =>
+      _prefs.setBool(_kBackgroundAlerts, on);
 
   AppThemeChoice get themeChoice =>
       AppThemeChoiceLabel.fromId(_prefs.getString(_kTheme));

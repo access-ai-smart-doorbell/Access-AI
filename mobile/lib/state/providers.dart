@@ -7,7 +7,9 @@ import '../models/known_person.dart';
 import '../models/visitor_event.dart';
 import '../services/api_service.dart';
 import '../services/audio_service.dart';
+import '../services/background_alert_service.dart';
 import '../services/events_service.dart';
+import '../services/notification_service.dart';
 import '../services/prefs_service.dart';
 import '../services/wakeword_service.dart';
 
@@ -78,6 +80,62 @@ final eventStreamProvider = StreamProvider<Map<String, dynamic>>(
 
 final wsStateProvider = StreamProvider<WsState>(
     (ref) => ref.watch(eventsServiceProvider).state);
+
+// --- Background doorbell alerts (LAN-only, no Firebase) -------------------
+/// Posts the actual notification. Initialised once in main() before the first
+/// frame so an event arriving during startup still alerts.
+final notificationServiceProvider = Provider<NotificationService>(
+    (ref) => NotificationService());
+
+/// Keeps the MAIN isolate alive (and with it the /events socket) while the app
+/// is backgrounded. See background_alert_service.dart for why the socket is
+/// deliberately NOT moved into the service's own isolate.
+final backgroundAlertServiceProvider = Provider<BackgroundAlertService>(
+    (ref) => BackgroundAlertService());
+
+/// Whether background alerts are switched on. Driving the foreground service
+/// from a notifier (not the Settings widget) means it survives tab switches and
+/// resumes on launch exactly like the wake word does.
+class BackgroundAlertsNotifier extends Notifier<bool> {
+  @override
+  bool build() {
+    final enabled = ref.read(prefsProvider).backgroundAlertsEnabled;
+    if (enabled) {
+      // Defer: providers must finish building before we touch platform channels.
+      Future.microtask(() => _start());
+    }
+    return enabled;
+  }
+
+  Future<bool> setEnabled(bool on) async {
+    await ref.read(prefsProvider).setBackgroundAlertsEnabled(on);
+    if (!on) {
+      await ref.read(backgroundAlertServiceProvider).stop();
+      state = false;
+      return false;
+    }
+    return _start();
+  }
+
+  /// Starts the service, but only after notification permission is actually
+  /// granted — a foreground service with no postable notification would show
+  /// the mandatory persistent notice and still alert nothing.
+  Future<bool> _start() async {
+    final notif = ref.read(notificationServiceProvider);
+    await notif.init();
+    if (!notif.granted) {
+      state = false;
+      return false;
+    }
+    final ok = await ref.read(backgroundAlertServiceProvider).start();
+    state = ok;
+    return ok;
+  }
+}
+
+final backgroundAlertsProvider =
+    NotifierProvider<BackgroundAlertsNotifier, bool>(
+        BackgroundAlertsNotifier.new);
 
 // --- Audio / haptics singleton -------------------------------------------
 final audioProvider = Provider<AudioService>((ref) {
