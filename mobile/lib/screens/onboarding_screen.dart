@@ -5,6 +5,7 @@ import '../core/glass.dart';
 import '../core/motion.dart';
 import '../core/tokens.dart';
 import '../services/api_service.dart';
+import '../services/discovery_service.dart';
 import '../services/prefs_service.dart';
 import '../state/providers.dart';
 import '../widgets/doorbell_hero.dart';
@@ -23,7 +24,10 @@ class OnboardingScreen extends ConsumerStatefulWidget {
 class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   late final TextEditingController _url;
   bool _connecting = false;
+  bool _scanning = false;
+  double _scanProgress = 0.0;
   String? _error;
+  String? _scanStatus;
   bool _testedButFailed = false;
 
   @override
@@ -62,6 +66,60 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     } finally {
       probe.close();
       if (mounted) setState(() => _connecting = false);
+    }
+  }
+
+  Future<void> _autoDetect() async {
+    setState(() {
+      _scanning = true;
+      _scanProgress = 0.0;
+      _scanStatus = 'Scanning your Wi‑Fi network…';
+      _error = null;
+      _testedButFailed = false;
+    });
+
+    final token = ref.read(prefsProvider).authToken;
+
+    final found = await DiscoveryService.scan(
+      token: token,
+      onProgress: (p) {
+        if (mounted) {
+          setState(() {
+            _scanProgress = p;
+            if (p < 0.5) {
+              _scanStatus = 'Scanning your Wi‑Fi network…';
+            } else if (p < 0.9) {
+              _scanStatus = 'Almost done…';
+            } else {
+              _scanStatus = 'Finishing up…';
+            }
+          });
+        }
+      },
+    );
+
+    if (!mounted) return;
+
+    if (found != null) {
+      setState(() {
+        _url.text = found;
+        _scanning = false;
+        _scanStatus = null;
+        _scanProgress = 0;
+        _error = null;
+      });
+      // Auto-connect to the discovered server.
+      await _connect();
+    } else {
+      setState(() {
+        _scanning = false;
+        _scanStatus = null;
+        _scanProgress = 0;
+        _error =
+            'No AccessAI server found on your Wi‑Fi. Make sure the server is '
+            'running on your laptop and both devices are on the same network.';
+        _testedButFailed = false;
+      });
     }
   }
 
@@ -120,68 +178,131 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                       Entrance(
                         index: 3,
                         child: GlassCard(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('Connect to your server',
-                                style: text.titleMedium),
-                            const SizedBox(height: T.s8),
-                            Text(
-                              'Enter the address shown when you start the '
-                              'AccessAI server (its LAN IP and port). Your phone '
-                              'and computer must be on the same Wi‑Fi.',
-                              style: text.bodySmall,
-                            ),
-                            const SizedBox(height: T.s16),
-                            TextField(
-                              controller: _url,
-                              keyboardType: TextInputType.url,
-                              autocorrect: false,
-                              onSubmitted: (_) => _connect(),
-                              decoration: const InputDecoration(
-                                labelText: 'Server address',
-                                prefixIcon: Icon(Icons.dns_outlined),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Connect to your server',
+                                  style: text.titleMedium),
+                              const SizedBox(height: T.s8),
+                              Text(
+                                'Tap Auto‑Detect to find the server '
+                                'automatically, or enter the address manually. '
+                                'Your phone and laptop must be on the same Wi‑Fi.',
+                                style: text.bodySmall,
                               ),
-                            ),
-                            if (_error != null) ...[
-                              const SizedBox(height: T.s12),
+                              const SizedBox(height: T.s16),
+
+                              // ── Auto-detect button ─────────────────────────
+                              SizedBox(
+                                height: T.minTouch,
+                                width: double.infinity,
+                                child: OutlinedButton.icon(
+                                  onPressed:
+                                      (_scanning || _connecting) ? null : _autoDetect,
+                                  icon: _scanning
+                                      ? const SizedBox(
+                                          width: 18,
+                                          height: 18,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2))
+                                      : const Icon(Icons.wifi_find_outlined),
+                                  label: Text(_scanning
+                                      ? 'Scanning…'
+                                      : 'Auto‑Detect Server'),
+                                ),
+                              ),
+
+                              // ── Scan progress bar ──────────────────────────
+                              if (_scanning) ...[
+                                const SizedBox(height: T.s12),
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(4),
+                                  child: LinearProgressIndicator(
+                                    value: _scanProgress,
+                                    minHeight: 6,
+                                  ),
+                                ),
+                                const SizedBox(height: T.s8),
+                                Text(
+                                  _scanStatus ?? '',
+                                  style: text.bodySmall?.copyWith(
+                                    color: T.muted,
+                                  ),
+                                ),
+                              ],
+
+                              const SizedBox(height: T.s16),
+
+                              // ── Divider with "or" ──────────────────────────
                               Row(
                                 children: [
-                                  const Icon(Icons.error_outline,
-                                      color: T.danger, size: 20),
-                                  const SizedBox(width: T.s8),
-                                  Expanded(
-                                      child: Text(_error!,
-                                          style: text.bodySmall?.copyWith(
-                                              color: T.danger))),
+                                  const Expanded(child: Divider()),
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: T.s8),
+                                    child: Text('or enter manually',
+                                        style: text.bodySmall
+                                            ?.copyWith(color: T.muted)),
+                                  ),
+                                  const Expanded(child: Divider()),
                                 ],
                               ),
-                            ],
-                            const SizedBox(height: T.s16),
-                            SizedBox(
-                              height: T.minTouch,
-                              child: FilledButton.icon(
-                                onPressed: _connecting ? null : _connect,
-                                icon: _connecting
-                                    ? const SizedBox(
-                                        width: 18,
-                                        height: 18,
-                                        child: CircularProgressIndicator(
-                                            strokeWidth: 2))
-                                    : const Icon(Icons.wifi_tethering),
-                                label: Text(
-                                    _connecting ? 'Connecting…' : 'Connect'),
+
+                              const SizedBox(height: T.s16),
+
+                              // ── Manual URL field ───────────────────────────
+                              TextField(
+                                controller: _url,
+                                keyboardType: TextInputType.url,
+                                autocorrect: false,
+                                onSubmitted: (_) => _connect(),
+                                decoration: const InputDecoration(
+                                  labelText: 'Server address',
+                                  hintText: 'http://192.168.x.x:8000',
+                                  prefixIcon: Icon(Icons.dns_outlined),
+                                ),
                               ),
-                            ),
-                            if (_testedButFailed) ...[
-                              const SizedBox(height: T.s8),
-                              TextButton(
-                                onPressed: _continueAnyway,
-                                child: const Text('Continue anyway'),
+
+                              if (_error != null) ...[
+                                const SizedBox(height: T.s12),
+                                Row(
+                                  children: [
+                                    const Icon(Icons.error_outline,
+                                        color: T.danger, size: 20),
+                                    const SizedBox(width: T.s8),
+                                    Expanded(
+                                        child: Text(_error!,
+                                            style: text.bodySmall?.copyWith(
+                                                color: T.danger))),
+                                  ],
+                                ),
+                              ],
+                              const SizedBox(height: T.s16),
+                              SizedBox(
+                                height: T.minTouch,
+                                child: FilledButton.icon(
+                                  onPressed:
+                                      (_connecting || _scanning) ? null : _connect,
+                                  icon: _connecting
+                                      ? const SizedBox(
+                                          width: 18,
+                                          height: 18,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2))
+                                      : const Icon(Icons.wifi_tethering),
+                                  label: Text(
+                                      _connecting ? 'Connecting…' : 'Connect'),
+                                ),
                               ),
+                              if (_testedButFailed) ...[
+                                const SizedBox(height: T.s8),
+                                TextButton(
+                                  onPressed: _continueAnyway,
+                                  child: const Text('Continue anyway'),
+                                ),
+                              ],
                             ],
-                          ],
-                        ),
+                          ),
                         ),
                       ),
                     ],

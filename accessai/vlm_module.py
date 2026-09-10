@@ -151,7 +151,7 @@ class VLMModule:
             why = (
                 "no 'requests'" if not _HAS_REQUESTS else
                 "no OpenCV" if not _HAS_CV2 else
-                "no API keys (set GITHUB_MODELS_KEYS in .env)" if not self._keys
+                "no API keys (set GROQ_API_KEY or OPENAI_API_KEY in .env)" if not self._keys
                 else "no base_url"
             )
             print(f"[VLMModule] Not ready ({why}); scene/OCR will be skipped "
@@ -285,6 +285,16 @@ class VLMModule:
                     print(f"[VLMModule] key {masked} returned an unexpected "
                           f"body, failing over: {e}")
                     continue
+                # Strip Qwen-style <think>...</think> reasoning blocks. Some
+                # models (e.g. qwen3.6) prepend internal chain-of-thought
+                # wrapped in these tags; leaving them in breaks JSON parsing
+                # and leaks raw reasoning into spoken announcements. Handle
+                # both closed tags and unclosed ones (truncated by max_tokens).
+                content = re.sub(r"<think>.*?</think>", "", content,
+                                 flags=re.DOTALL).strip()
+                # If <think> was opened but never closed (truncated), drop it.
+                if "<think>" in content:
+                    content = content.split("<think>")[0].strip()
                 self._last_good = idx           # remember the winner
                 self._last_error = ""
                 return content

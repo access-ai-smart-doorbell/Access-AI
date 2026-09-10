@@ -9,6 +9,7 @@ import '../core/ui.dart';
 import '../core/theme.dart';
 import '../models/app_status.dart';
 import '../services/api_service.dart';
+import '../services/discovery_service.dart';
 import '../services/prefs_service.dart';
 import '../state/providers.dart';
 import '../widgets/status_pill.dart';
@@ -28,6 +29,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   late final TextEditingController _url;
   late final TextEditingController _token;
   bool _testing = false;
+  bool _scanning = false;
+  double _scanProgress = 0.0;
+  String? _scanStatus;
   AppStatus? _health;
   String? _healthError;
 
@@ -104,6 +108,47 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       setState(() => _healthError = e.message);
     } finally {
       if (mounted) setState(() => _testing = false);
+    }
+  }
+
+  Future<void> _autoDetect() async {
+    setState(() {
+      _scanning = true;
+      _scanProgress = 0.0;
+      _scanStatus = 'Scanning your Wi\u2011Fi network\u2026';
+    });
+    final token = _token.text.trim();
+    final found = await DiscoveryService.scan(
+      token: token,
+      onProgress: (p) {
+        if (mounted) {
+          setState(() {
+            _scanProgress = p;
+            _scanStatus = p < 0.6
+                ? 'Scanning your Wi\u2011Fi network\u2026'
+                : p < 0.95
+                    ? 'Almost done\u2026'
+                    : 'Finishing up\u2026';
+          });
+        }
+      },
+    );
+    if (!mounted) return;
+    setState(() {
+      _scanning = false;
+      _scanStatus = null;
+      _scanProgress = 0;
+    });
+    if (found != null) {
+      _url.text = found;
+      // Auto-save and test the discovered address.
+      await _test();
+    } else {
+      showSnack(
+          context,
+          'No AccessAI server found. Make sure the server is running and '
+          'both devices are on the same Wi\u2011Fi.',
+          error: true);
     }
   }
 
@@ -214,6 +259,34 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       'port (default :8000). Phone and computer must share Wi‑Fi.',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
+                    const SizedBox(height: T.s12),
+                    // Auto-detect button
+                    SizedBox(
+                      height: T.minTouch,
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: (_scanning || _testing) ? null : _autoDetect,
+                        icon: _scanning
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2))
+                            : const Icon(Icons.wifi_find_outlined),
+                        label: Text(_scanning
+                            ? (_scanStatus ?? 'Scanning\u2026')
+                            : 'Auto\u2011Detect Server'),
+                      ),
+                    ),
+                    if (_scanning) ...[
+                      const SizedBox(height: T.s8),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: LinearProgressIndicator(
+                          value: _scanProgress,
+                          minHeight: 6,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: T.s12),
                     Row(
                       children: [

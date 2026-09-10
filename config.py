@@ -240,7 +240,7 @@ ANTISPOOF_MIN_SCORE = 0.55
 ANTISPOOF_BACKEND = "auto"
 
 # ---------------------------------------------------------------------------
-# VLM scene description + OCR (Phase 6 - GitHub Models, cloud vision)
+# VLM scene description + OCR (Phase 6 - cloud vision, OpenAI-compatible)
 # ---------------------------------------------------------------------------
 # For UNKNOWN visitors, one cloud call describes the scene for a blind listener
 # and transcribes any visible parcel-label text. KNOWN faces skip it entirely
@@ -249,20 +249,23 @@ ANTISPOOF_BACKEND = "auto"
 #
 # API keys (comma-separated, tried in order with automatic failover) are read
 # from, in priority order:
-#   1. environment variable  GITHUB_MODELS_KEYS
-#   2. a .env file           GITHUB_MODELS_KEYS=key1,key2   (git-ignored)
-#   3. GITHUB_MODELS_KEYS below (leave "" - do NOT hardcode real keys)
-# Create fine-grained GitHub PATs with "Models" access; two accounts/keys give
-# you failover when one hits the free-tier rate limit. See .env.example + README.
-GITHUB_MODELS_KEYS = ""                       # keep empty; use .env instead
-# Modern GitHub Models endpoint. Legacy Azure host still works if you swap it:
-#   VLM_BASE_URL = "https://models.inference.ai.azure.com"
-VLM_BASE_URL = "https://models.github.ai/inference"
-VLM_MODEL = "gpt-4o"                          # Phase 16: gpt-4o is materially more
-                                              #   accurate at counting people and
-                                              #   reading labels than gpt-4o-mini
-                                              #   (A/B tested on bus.jpg). Swap back
-                                              #   to "gpt-4o-mini" for lower quota use.
+#   1. environment variable  OPENAI_API_KEY  (preferred)
+#   2. environment variable  GITHUB_MODELS_KEYS  (legacy, deprecated)
+#   3. VLM_API_KEYS below (leave "" - do NOT hardcode real keys)
+# Get an OpenAI API key from https://platform.openai.com/api-keys and set it
+# in .env. Multiple comma-separated keys enable automatic failover.
+#
+# NOTE: GitHub Models was retired on July 30 2026 (HTTP 410). If you have old
+# GITHUB_MODELS_KEYS set they will still be tried, but will fail. Migrate to
+# OPENAI_API_KEY.
+GITHUB_MODELS_KEYS = ""                       # DEPRECATED - use OPENAI_API_KEY
+VLM_API_KEYS = ""                             # keep empty; use .env instead
+# OpenAI-compatible chat completions endpoint. Any provider that speaks the
+# same format works (Azure OpenAI, Groq, Together AI, local vLLM, etc.).
+VLM_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+VLM_MODEL = "gemini-3.6-flash"                 # Gemini vision model; fast,
+                                              #   excellent at image understanding,
+                                              #   no thinking overhead.
 VLM_TIMEOUT = 12                              # seconds per HTTP request (Phase 12:
                                               #   lowered 20->12 so a slow/dead key
                                               #   fails over fast and never stalls

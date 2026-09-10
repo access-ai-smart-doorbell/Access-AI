@@ -220,7 +220,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         sending: _sendingReply,
                         // Server-provided chips (Phase 17); the widget falls
                         // back to its own defaults while loading or offline.
-                        quickReplies: ref.watch(quickRepliesProvider).valueOrNull ??
+                        quickReplies: ref.watch(quickRepliesProvider).value ??
                             ReplyComposer.defaultQuickReplies,
                       ),
                     ),

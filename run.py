@@ -184,7 +184,12 @@ def main() -> None:
     vlm = None
     ocr = None
     if config.ENABLE_VLM:
-        keys = os.environ.get("GITHUB_MODELS_KEYS") or config.GITHUB_MODELS_KEYS
+        keys = (os.environ.get("GEMINI_API_KEY")
+                or os.environ.get("GROQ_API_KEY")
+                or os.environ.get("OPENAI_API_KEY")
+                or os.environ.get("GITHUB_MODELS_KEYS")
+                or getattr(config, "VLM_API_KEYS", "")
+                or config.GITHUB_MODELS_KEYS)
         vlm = VLMModule(keys,
                         base_url=config.VLM_BASE_URL,
                         model=config.VLM_MODEL,

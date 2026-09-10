@@ -52,14 +52,16 @@
             </intent-filter>
         </activity>
         <!-- NOTE: flutter_foreground_task declares its own <service> and boot
-             <receiver> in the plugin's manifest, which Gradle merges in here --
-             do NOT hand-declare them, a mismatched class name fails the merge.
+             <receiver> in the plugin's manifest, which Gradle merges in here.
+             Do NOT hand-declare them; a mismatched class name fails the merge.
              After `flutter pub get`, confirm the merged result carries
              android:foregroundServiceType="dataSync" (Android 14+ requires a
              typed service) by checking
              build/app/intermediates/merged_manifests/release/AndroidManifest.xml.
              If the type is missing, add it with a tools:node="merge" override
-             rather than a fresh declaration. -->
+             rather than a fresh declaration.
+             (Careful: XML forbids a double hyphen inside a comment, and the
+             manifest merger rejects the whole file if one appears here.) -->
 
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
