@@ -1,110 +1,283 @@
 <div align="center">
 
-# 🔔 AccessAI
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- ANIMATED HEADER BANNER                                                 -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
 
-### *An AI-Powered Accessibility Doorbell for Blind & Deaf Users*
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:0d1117,25:1a1b4b,50:2d1b69,75:1e3a5f,100:0d1117&height=220&section=header&text=🔔%20AccessAI&fontSize=72&fontColor=ffffff&animation=fadeIn&fontAlignY=35&desc=AI-Powered%20Accessibility%20Doorbell&descSize=22&descAlignY=55&descColor=58a6ff" width="100%"/>
 
-[![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![YOLOv8](https://img.shields.io/badge/Vision-YOLOv8%20%2B%20InsightFace-00FFFF?style=for-the-badge&logo=ultralytics&logoColor=black)](https://ultralytics.com)
-[![Voice](https://img.shields.io/badge/Audio-Whisper%20%2B%20Kokoro--ONNX-7C3AED?style=for-the-badge&logo=openai&logoColor=white)](https://github.com/thewh1teagle/kokoro-onnx)
-[![Phases](https://img.shields.io/badge/Phases-17%2F17%20Complete-10B981?style=for-the-badge)](#system-architecture--phase-roadmap)
-[![Languages](https://img.shields.io/badge/Languages-11%20Supported-F59E0B?style=for-the-badge)](#multilingual--accessibility-modes)
-[![Tests](https://img.shields.io/badge/Tests-Pytest%20Passing-0EA5E9?style=for-the-badge&logo=pytest&logoColor=white)](#testing--verification)
-[![License](https://img.shields.io/badge/License-MIT-EF4444?style=for-the-badge)](LICENSE)
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- ANIMATED TYPING SVG                                                    -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
 
 <br/>
 
-> *"Rahul is at the front door. He is carrying a parcel. Likely a delivery. They said: 'Package for you.'"*
+<a href="https://git.io/typing-svg"><img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=600&size=22&duration=3000&pause=1000&color=58A6FF&center=true&vCenter=true&multiline=true&repeat=true&width=800&height=80&lines=%E2%9C%A8+Perceives+visitors+%7C+Speaks+announcements+%7C+11+languages;%F0%9F%91%81%EF%B8%8F+Blind+Mode+%7C+%F0%9F%91%82+Deaf+Mode+%7C+%F0%9F%8C%93+Both+Mode;%F0%9F%8E%99%EF%B8%8F+%22Hey+Access...+who+is+at+the+door%3F%22" alt="Typing SVG" /></a>
+
+<br/>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- BADGES ROW 1 — Core Tech                                               -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+
+<p>
+<img src="https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python"/>
+<img src="https://img.shields.io/badge/FastAPI-0.115-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI"/>
+<img src="https://img.shields.io/badge/YOLOv8-Ultralytics-00FFFF?style=for-the-badge&logo=yolo&logoColor=black" alt="YOLOv8"/>
+<img src="https://img.shields.io/badge/InsightFace-ArcFace-7C3AED?style=for-the-badge" alt="InsightFace"/>
+<img src="https://img.shields.io/badge/Whisper-Offline-FF6F00?style=for-the-badge&logo=openai&logoColor=white" alt="Whisper"/>
+</p>
+
+<!-- BADGES ROW 2 — Status -->
+
+<p>
+<img src="https://img.shields.io/badge/Phases-17%2F17%20Complete-10B981?style=for-the-badge&logo=checkmarx&logoColor=white" alt="Phases"/>
+<img src="https://img.shields.io/badge/Languages-11%20Supported-F59E0B?style=for-the-badge&logo=googletranslate&logoColor=white" alt="Languages"/>
+<img src="https://img.shields.io/badge/Tests-Pytest%20Suite-0EA5E9?style=for-the-badge&logo=pytest&logoColor=white" alt="Tests"/>
+<img src="https://img.shields.io/badge/TTS-Kokoro%20Neural-E040FB?style=for-the-badge&logo=audiomack&logoColor=white" alt="TTS"/>
+<img src="https://img.shields.io/badge/License-MIT-EF4444?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="License"/>
+</p>
+
+<br/>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- HERO QUOTE                                                             -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+
+<table>
+<tr>
+<td>
+
+> *"Rahul is at the front door. He is carrying a parcel. Likely a delivery.*
+> *They said: 'Package for you.'"*
 >
-> — **Spoken via neural speech (Blind Mode)** or **displayed in large high-contrast text + visual pulse + quick-reply chat (Deaf Mode)** in **11 languages**, controllable completely **hands-free** (*"Hey Access... who is at the door?"*).
+> — Spoken as **natural human voice** (Blind Mode) or shown as **large high-contrast text + visual pulse + quick-reply chat** (Deaf Mode), in **11 languages**, controllable completely **hands-free** via *"Hey Access"*.
+
+</td>
+</tr>
+</table>
 
 <br/>
 
-[Quick Start](#-quick-start) • [Key Features](#-key-features) • [Architecture](#-system-architecture) • [Phase Matrix](#-development-roadmap-phases-117) • [Voice Commands](#-hands-free-voice-commands-phase-10--11) • [API Specs](#-http--websocket-api-reference)
+<!-- NAV LINKS -->
 
----
+[**⚡ Quick Start**](#-quick-start) &nbsp;•&nbsp;
+[**🧠 Architecture**](#-system-architecture) &nbsp;•&nbsp;
+[**🗺️ Phases**](#-development-phases-117) &nbsp;•&nbsp;
+[**🎙️ Voice**](#-hands-free-voice-commands) &nbsp;•&nbsp;
+[**🌐 API**](#-api-reference) &nbsp;•&nbsp;
+[**🧪 Tests**](#-testing--verification)
 
 </div>
 
-## 🌟 Visual Showcase
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- WAVE DIVIDER                                                           -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:161b22&height=2&section=header" width="100%"/>
+
+<br/>
+
+## 🎯 The Problem We Solve
 
 <div align="center">
 
-> 💡 *To display project screenshots and live GIFs in this showcase, place your media assets in `docs/assets/` as outlined in the [Media Assets Setup](#-media-assets--placeholders) section below.*
-
-| **Live Accessibility Dashboard** | **Native Mobile App (Flutter)** |
-|:---:|:---:|
-| ![AccessAI Web Dashboard Placeholder](docs/assets/dashboard_preview.png) | ![AccessAI Mobile App Placeholder](docs/assets/mobile_preview.png) |
-| *Real-time vision feed, status indicators & multi-modal output* | *Cross-platform control, LAN push notifications & history log* |
+```
+╔══════════════════════════════════════════════════════════════════════════╗
+║                                                                          ║
+║   🔔  Standard Doorbell          →    "Someone is at the door."          ║
+║                                                                          ║
+║   🧠  AccessAI Doorbell          →    "Rahul is at the front door.       ║
+║                                        He is carrying a parcel.          ║
+║                                        Likely a delivery.                ║
+║                                        They said: 'Package for you.'"   ║
+║                                                                          ║
+╚══════════════════════════════════════════════════════════════════════════╝
+```
 
 </div>
 
----
+For **visually or hearing-impaired** individuals, a binary *ding-dong* creates anxiety, safety risks, and physical barriers. **AccessAI** transforms any camera stream into a full **multi-modal perception bridge** — processing face biometrics, object detection, anti-spoof liveness, scene understanding, speech recognition, translation, and neural text-to-speech — delivering personalized sensory output in **under 3 seconds**.
 
-## 🎯 Executive Overview
+Built across **17 production-grade phases**, every capability below is wired into a single event pipeline, one dashboard, and one mobile client.
 
-Standard doorbells provide a binary alert: *"someone is at the door."* For visually or hearing-impaired individuals, this lack of contextual awareness creates anxiety, safety risks, and physical barriers. 
+<br/>
 
-**AccessAI** transforms a standard camera stream into an intelligent multi-modal perception bridge. Built across **17 complete, production-grade development phases**, AccessAI processes computer vision, neural biometrics, anti-spoof liveness, scene understanding, speech recognition, multi-lingual translation, and text-to-speech in under **2.5 seconds**—delivering personalized sensory output tailored directly to the user's specific accessibility needs.
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:161b22&height=2&section=header" width="100%"/>
 
-### 🔑 Dual Accessibility Modes
-* 👁️ **Blind Mode:** Operates 100% hands-free. Listens continuously for the custom wake phrase **"Hey Access"**, speaks detailed visitor announcements using human-like offline neural voices (Kokoro-ONNX), and accepts spoken natural language queries.
-* 👂 **Deaf Mode:** Replaces audio alerts with high-contrast visual status cards, flashing smart-home light webhooks, auto-captions, and instant quick-reply buttons (e.g., *"Please leave the package at the door"*).
-* 🌓 **Dual/Both Mode:** Combines full visual alerts and spoken neural audio concurrently.
+<br/>
 
----
+## 🔑 Dual Accessibility Modes
+
+<div align="center">
+<table>
+<tr>
+<td align="center" width="33%">
+
+### 👁️ Blind Mode
+100% **hands-free**. Listens for the custom wake phrase **"Hey Access"**, speaks detailed visitor announcements using human-like offline neural voice (**Kokoro-ONNX**), and accepts spoken natural language queries.
+
+</td>
+<td align="center" width="33%">
+
+### 👂 Deaf Mode
+Replaces audio with **high-contrast visual cards**, **flashing smart-home light webhooks**, auto-captions, and **instant quick-reply buttons** (e.g., *"Please leave the package at the door"*).
+
+</td>
+<td align="center" width="33%">
+
+### 🌓 Both Mode
+Full visual alerts **and** spoken neural audio **concurrently** — for users with partial impairment or multi-user households.
+
+</td>
+</tr>
+</table>
+</div>
+
+<br/>
+
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:161b22&height=2&section=header" width="100%"/>
+
+<br/>
 
 ## ⚡ Key Features
 
-* 👤 **Biometric Face Recognition:** Zero-latency face identification using InsightFace ArcFace (`buffalo_l`) paired with rolling vector databases for trusted vs. unknown visitor classification.
-* 📦 **Contextual Object & Delivery Fusion:** Real-time YOLOv8 object detection recognizes packages, backpacks, and accessories, fusing bounding boxes with intent algorithms to detect courier deliveries.
-* 🛡️ **Anti-Spoofing Liveness Verification:** Multi-spectral ONNX MiniFASNet models analyze facial depth and micro-textures to detect photorealistic photo/screen spoof attempts, instantly downgrading fake faces to `Unknown`.
-* 👁️‍🗨️ **Cloud Vision & Parcel OCR:** Triggers Gemini 3.6 Flash / OpenAI-compatible Vision-Language Models (VLM) for unknown visitors to parse clothing appearance, environmental context, and shipping label text.
-* 🗣️ **Natural Offline Neural Voice (TTS):** Human-quality voice synthesis via Kokoro-ONNX and Edge-TTS with graceful multi-tier fallbacks down to system `espeak`.
-* 🎙️ **Hands-Free Voice Command Engine:** Offline wake-word detection powered by ONNX `openWakeWord` driving natural language voice control.
-* 🔁 **Visitor Re-ID & DBSCAN Auto-Enrollment:** Tracks repeat unknown visitors across 24 hours using OSNet feature embeddings, offering one-tap auto-enrollment for frequent guests.
-* 📱 **Native Flutter & PWA Ecosystem:** Complete web-based responsive PWA dashboard and cross-platform native Flutter mobile application with LAN WebSockets and motion alerts.
-* 🔒 **Hardened LAN Security & ESP32 Integration:** Token-based bearer auth, IP rate-limiting, and HMAC SHA-256 webhook signatures for lightweight ESP32-CAM doorbell microcontrollers.
+<div align="center">
+<table>
+<tr>
+<td align="center" width="25%">
+<br/>
+<img src="https://img.shields.io/badge/-Face_Recognition-7C3AED?style=for-the-badge" alt="Face"/><br/><br/>
+<b>InsightFace ArcFace</b><br/>
+Deep biometric identification with rolling vector DB for trusted vs. unknown classification
+<br/><br/>
+</td>
+<td align="center" width="25%">
+<br/>
+<img src="https://img.shields.io/badge/-Object_Detection-00FFFF?style=for-the-badge" alt="Detection"/><br/><br/>
+<b>YOLOv8 Nano</b><br/>
+Real-time object detection fused with intent algorithms for delivery & context awareness
+<br/><br/>
+</td>
+<td align="center" width="25%">
+<br/>
+<img src="https://img.shields.io/badge/-Anti_Spoofing-EF4444?style=for-the-badge" alt="Anti-Spoof"/><br/><br/>
+<b>MiniFASNet ONNX</b><br/>
+Multi-spectral liveness analysis detecting photo/screen spoof attempts in real-time
+<br/><br/>
+</td>
+<td align="center" width="25%">
+<br/>
+<img src="https://img.shields.io/badge/-Scene_AI-F59E0B?style=for-the-badge" alt="VLM"/><br/><br/>
+<b>Gemini / OpenAI VLM</b><br/>
+Cloud vision for clothing, context & parcel OCR on unknown visitors
+<br/><br/>
+</td>
+</tr>
+<tr>
+<td align="center" width="25%">
+<br/>
+<img src="https://img.shields.io/badge/-Neural_Voice-E040FB?style=for-the-badge" alt="TTS"/><br/><br/>
+<b>Kokoro-ONNX TTS</b><br/>
+Human-quality offline neural synthesis with Edge-TTS & espeak fallback chain
+<br/><br/>
+</td>
+<td align="center" width="25%">
+<br/>
+<img src="https://img.shields.io/badge/-Voice_Control-10B981?style=for-the-badge" alt="Voice"/><br/><br/>
+<b>Wake Word Engine</b><br/>
+Custom "Hey Access" ONNX detector with offline Whisper STT & natural language commands
+<br/><br/>
+</td>
+<td align="center" width="25%">
+<br/>
+<img src="https://img.shields.io/badge/-Re_ID_Tracking-3B82F6?style=for-the-badge" alt="ReID"/><br/><br/>
+<b>OSNet + DBSCAN</b><br/>
+24-hour appearance tracking of repeat unknowns with auto-enrollment clustering
+<br/><br/>
+</td>
+<td align="center" width="25%">
+<br/>
+<img src="https://img.shields.io/badge/-Mobile_+_PWA-FF6F00?style=for-the-badge" alt="Mobile"/><br/><br/>
+<b>Flutter + Web PWA</b><br/>
+Native cross-platform app & installable dashboard with LAN WebSocket alerts
+<br/><br/>
+</td>
+</tr>
+</table>
+</div>
 
----
+<br/>
 
-## 🏗️ System Architecture
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:161b22&height=2&section=header" width="100%"/>
 
-AccessAI relies on a single immutable event entity—the **`VisitorEvent`**—which acts as the pipeline's backbone. Every module inspects, populates, or transforms fields on this event object as it progresses through perception, decision, translation, and notification stages.
+<br/>
+
+## 🛠️ Tech Stack
+
+<div align="center">
+
+<img src="https://skillicons.dev/icons?i=python,fastapi,pytorch,opencv,flutter,dart,sqlite,html,css,js&perline=10" alt="Tech Stack"/>
+
+<br/><br/>
+
+| Layer | Technologies |
+|:---:|:---|
+| **🧠 AI / ML** | YOLOv8 · InsightFace ArcFace · MiniFASNet · OSNet · OpenAI Whisper · Silero VAD · openWakeWord · DBSCAN |
+| **🗣️ Voice** | Kokoro-ONNX (offline neural) · Edge-TTS (online neural) · pyttsx3/espeak (fallback) |
+| **🌐 Backend** | FastAPI · Uvicorn · SQLAlchemy · SQLite · Jinja2 · WebSockets |
+| **📱 Frontend** | HTML5/CSS3/JS Dashboard · Progressive Web App · Flutter (Android/iOS) |
+| **🔧 Inference** | ONNX Runtime · PyTorch 2.4.1 (CPU) · NumPy · OpenCV · Pillow |
+| **🔒 Security** | Bearer Token Auth · IP Rate Limiting · HMAC-SHA256 Webhooks · CORS |
+
+</div>
+
+<br/>
+
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:161b22&height=2&section=header" width="100%"/>
+
+<br/>
+
+## 🧠 System Architecture
+
+<div align="center">
+
+AccessAI relies on a single immutable event entity — the **`VisitorEvent`** — which acts as the pipeline's backbone. Every module inspects, populates, or transforms fields on this event as it flows through perception, decision, translation, and notification stages.
+
+</div>
 
 ```mermaid
 flowchart TD
-    subgraph Input ["1. Input Sources"]
-        CAM["Webcam / ESP32-CAM (MJPEG)"]
-        MIC["Microphone Audio"]
-        MOT["Software Motion Trigger"]
+    subgraph INPUT ["🎯 INPUT SOURCES"]
+        CAM["📷 Webcam / ESP32-CAM\n(MJPEG Stream)"]
+        MIC["🎤 Microphone\n(16kHz Mono)"]
+        MOT["🔔 Motion Detector\n(Software Trigger)"]
     end
 
-    subgraph Perception ["2. Perception Engine"]
-        FD["InsightFace ArcFace\n(Face Recognition)"]
-        YOLO["YOLOv8 Detection\n(Objects & Extra People)"]
-        SPOOF["MiniFASNet ONNX\n(Liveness & Anti-Spoof)"]
+    subgraph PERCEPTION ["👁️ PERCEPTION ENGINE"]
+        FD["👤 InsightFace ArcFace\n(Face Recognition)"]
+        YOLO["📦 YOLOv8 Nano\n(Object Detection)"]
+        SPOOF["🛡️ MiniFASNet ONNX\n(Liveness Check)"]
     end
 
-    subgraph Context ["3. Context & Intelligence"]
-        INT["Context Engine\n(Intent Fusion)"]
-        REID["OSNet Re-ID\n(24h Tracking)"]
-        VLM["Gemini 3.6 / OpenAI VLM\n(Scene & Label OCR)"]
-        AUTO["DBSCAN Auto-Enroll\n(Face Clustering)"]
+    subgraph CONTEXT ["🧠 CONTEXT & INTELLIGENCE"]
+        INT["⚡ Context Engine\n(Intent Fusion)"]
+        REID["🔄 OSNet Re-ID\n(24h Tracking)"]
+        VLM["☁️ Gemini / OpenAI VLM\n(Scene + OCR)"]
+        AUTO["📊 DBSCAN Clustering\n(Auto-Enroll)"]
     end
 
-    subgraph AudioTrans ["4. Speech & Translation"]
-        WAKE["openWakeWord\n('Hey Access' ONNX)"]
-        WHISPER["Offline Whisper + VAD\n(Speech-to-Text)"]
-        TRANS["Multi-Lingual MT\n(11 Languages)"]
+    subgraph AUDIO ["🗣️ SPEECH & TRANSLATION"]
+        WAKE["👂 openWakeWord\n('Hey Access' ONNX)"]
+        WHISPER["🎙️ Whisper + VAD\n(Offline STT)"]
+        TRANS["🌐 Translation\n(11 Languages)"]
     end
 
-    subgraph Output ["5. Sensory Output Engine"]
-        TTS["Kokoro-ONNX / Edge-TTS\n(Neural Audio)"]
-        DASH["FastAPI Dashboard / PWA"]
-        FLUTTER["Flutter Mobile App"]
-        LIGHTS["Smart-Home Webhook\n(Visual Light Pulse)"]
+    subgraph OUTPUT ["📢 SENSORY OUTPUT"]
+        TTS["🔊 Kokoro-ONNX\n(Neural Audio)"]
+        DASH["💻 FastAPI Dashboard\n(PWA)"]
+        FLUTTER["📱 Flutter App\n(LAN Alerts)"]
+        LIGHTS["💡 Smart-Home\n(Webhook Flash)"]
     end
 
     CAM --> FD & YOLO & SPOOF
@@ -114,223 +287,349 @@ flowchart TD
     MIC --> WAKE & WHISPER
     WHISPER --> TRANS
     INT & TRANS --> TTS & DASH & FLUTTER & LIGHTS
+
+    style INPUT fill:#1a1b4b,stroke:#58a6ff,color:#fff
+    style PERCEPTION fill:#2d1b69,stroke:#a78bfa,color:#fff
+    style CONTEXT fill:#1e3a5f,stroke:#38bdf8,color:#fff
+    style AUDIO fill:#3b1d4a,stroke:#e879f9,color:#fff
+    style OUTPUT fill:#134e4a,stroke:#2dd4bf,color:#fff
 ```
 
----
+<br/>
+
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:161b22&height=2&section=header" width="100%"/>
+
+<br/>
 
 ## 🚀 Quick Start
 
-### 📋 Prerequisites
-* **OS:** Linux (Ubuntu/Debian recommended) or macOS
-* **Python:** 3.12
-* **System Libraries:**
-  ```bash
-  sudo apt update && sudo apt install -y espeak libportaudio2 ffmpeg build-essential python3-dev
-  ```
-
-### 💻 Installation & Setup
-
-1. **Clone the Repository:**
-   ```bash
-   git clone https://github.com/vineeey/AccessAI.git
-   cd AccessAI
-   ```
-
-2. **Create & Activate Virtual Environment:**
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
-   ```
-
-3. **Install Dependencies (Recommended Installer):**
-   > ⚠️ **Important:** Do *not* run plain `pip install -r requirements.txt`. To preserve strict PyTorch 2.4.1 CPU pins and install non-dep packages (e.g., `kokoro-onnx`), use the automated installer script:
-   ```bash
-   ./scripts/install_deps.sh
-   ```
-
-4. **Environment Setup (Optional Cloud Vision Keys):**
-   ```bash
-   cp .env.example .env
-   # Add your OpenAI / Gemini API key for VLM scene descriptions:
-   # OPENAI_API_KEY=your_api_key_here
-   ```
-
-5. **Launch AccessAI:**
-   ```bash
-   python3 run.py
-   ```
-
-6. **Access Dashboard:**
-   Open **`http://localhost:8000`** in your browser.
-
----
-
-## 📊 Development Roadmap (Phases 1–17)
-
-Every single phase listed below is **100% implemented, tested, and fully functional** in this codebase.
-
-| Phase | Core Capability | Key Technical Modules | Implementation Status |
-|:---:|:---|:---|:---:|
-| **01** | Core Foundation & Pipeline Spine | `pipeline`, `camera`, `database`, `server` | ✅ Complete |
-| **02** | Deep Face Recognition | `face_module` (InsightFace ArcFace) | ✅ Complete |
-| **03** | Object & Scene Detection | `vision_module` (YOLOv8), `context_engine` | ✅ Complete |
-| **04** | Accessibility Output Routing | `accessibility`, `tts_module` | ✅ Complete |
-| **05** | Anti-Spoofing & Liveness | `antispoof_module` (MiniFASNet ONNX) | ✅ Complete |
-| **06** | Cloud VLM & Label OCR | `vlm_module` (OpenAI / Gemini VLM) | ✅ Complete |
-| **07** | Offline Speech Recognition | `speech_module` (Whisper + Silero VAD) | ✅ Complete |
-| **08** | Multi-Language Translation | `translate_module` (11 Languages) | ✅ Complete |
-| **09** | Re-ID & Auto-Enrollment | `reid_module` (OSNet), `auto_enroll` (DBSCAN) | ✅ Complete |
-| **10** | Hands-Free Voice Commands | `wakeword_module`, `voice_commands` | ✅ Complete |
-| **11** | Natural Offline Neural Audio | `tts_module` (Kokoro-ONNX / Edge-TTS) | ✅ Complete |
-| **12** | Async Background Enrichment | `pipeline`, `vlm_module` (Async Speed-up) | ✅ Complete |
-| **13** | Web Photo Enrollment UI | `server`, `face_module` | ✅ Complete |
-| **14** | Responsive PWA Dashboard | `web/` (Progressive Web App) | ✅ Complete |
-| **15** | Multi-Person Group Scenes | `visitor_event`, `accessibility` | ✅ Complete |
-| **16** | Native Flutter Mobile App | `mobile/` (Cross-platform client) | ✅ Complete |
-| **17** | LAN Hardening & Security | Bearer Auth, HMAC Webhooks, Motion Engine | ✅ Complete |
-
----
-
-## 🎙️ Hands-Free Voice Commands (Phase 10 & 11)
-
-For blind users, AccessAI provides a voice control interface requiring zero physical touching. 
-
-### Wake Word Activation
-Saying **"Hey Access"** (or clicking **🎤 Speak a Command** on the dashboard) opens a 4-second audio window. Commands are processed by a pure, unit-tested intent parser (`accessai/voice_commands.py`):
-
-| Spoken Command | Detected Intent | System Action & Response |
-|:---|:---|:---|
-| *"Who is at the door?"* | `who_is_there` | Captures camera frame, runs full perception pipeline, speaks announcement. |
-| *"Analyze the door"* / *"What do you see?"* | `analyze_now` | Re-evaluates visual scene & speaks detailed contextual description. |
-| *"Recent visitors"* / *"Who came earlier?"* | `recent` | Queries SQLite database and speaks the latest visitor log summary. |
-| *"How many visitors today?"* | `count_today` | Counts today's doorbell events and announces total tally. |
-| *"Open the camera"* | `open_camera` | Focuses live stream view on connected dashboard interfaces. |
-| *"Set blind / deaf mode"* | `set_mode` | Dynamically toggles active accessibility mode. |
-| *(Any unknown audio)* | `unknown` | Provides a friendly spoken help dialog listing available commands. |
-
----
-
-## ⚙️ Configuration & Hardware Setup
-
-All system options are centralized in **[`config.py`](config.py)**.
-
-```python
-# System Switches & Security
-ACCESSIBILITY_MODE = "both"         # "blind" | "deaf" | "both"
-USER_LANGUAGE = "ml"                # ISO language code (e.g. en, hi, ml, ta, te)
-ENABLE_WAKEWORD = True              # Hands-free voice commands
-WAKEWORD_ALWAYS_ON = True           # Continuous background microphone listening
-
-# Feature Flags
-ENABLE_FACE = True                  # InsightFace ArcFace recognition
-ENABLE_VISION = True                # YOLOv8 object detection
-ENABLE_ANTISPOOF = True             # Liveness checks
-ENABLE_VLM = True                   # Vision-language model descriptions
-ENABLE_REID = True                  # OSNet 24-hour appearance tracking
-ENABLE_AUTOENROLL = True            # DBSCAN frequent stranger clustering
-```
-
-### 📹 Hardware Integration: ESP32-CAM Setup
-Switching from a laptop webcam to an external **ESP32-CAM** board requires modifying **exactly one line** in `config.py`:
-
-```python
-# Laptop Webcam:
-CAMERA_SOURCE = 0
-
-# ESP32-CAM Network Stream (One-line swap):
-CAMERA_SOURCE = "http://192.168.1.50:81/stream"
-```
-
-For hardware wiring, flashing details, and HMAC authentication, refer to **[`docs/HARDWARE.md`](docs/HARDWARE.md)**.
-
----
-
-## 🌐 HTTP & WebSocket API Reference
-
-AccessAI exposes a full RESTful & WebSocket API via **FastAPI**:
-
-| Method | Endpoint | Description |
-|:---:|:---|:---|
-| `GET` | `/` | Responsive Web Dashboard & PWA |
-| `GET` | `/video` | Live MJPEG Video Stream |
-| `POST` | `/trigger` | Manual doorbell trigger (runs full perception pipeline) |
-| `POST` | `/ring` | Doorbell hardware webhook (supports optional HMAC signature) |
-| `GET` | `/status` | Central system health monitor (all module statuses & flags) |
-| `POST` | `/listen` | Push-to-talk voice command submission |
-| `GET` | `/history` | Visitor log event history |
-| `POST` | `/enroll` | Register a new face with custom name and metadata |
-| `POST` | `/mode` | Switch accessibility mode (`blind`, `deaf`, `both`) |
-| `WS` | `/events` | Real-time WebSocket event & audio stream broadcast |
-
----
-
-## 🌐 Multilingual & Accessibility Modes
-
-AccessAI supports **11 major languages** (English + 10 Indian regional languages) for speech recognition, translation, and voice synthesis:
-
-$$\text{Languages} = \{\text{English (en)}, \text{Hindi (hi)}, \text{Malayalam (ml)}, \text{Tamil (ta)}, \text{Telugu (te)}, \text{Kannada (kn)}, \text{Bengali (bn)}, \text{Marathi (mr)}, \text{Gujarati (gu)}, \text{Punjabi (pa)}, \text{Urdu (ur)}\}$$
-
-Speech output uses specialized regional neural voices (e.g., `ml-IN-SobhanaNeural`, `hi-IN-SwaraNeural`), ensuring natural native pronunciation.
-
----
-
-## 🧪 Testing & Verification
-
-The repository includes a comprehensive `pytest` suite testing all core logic isolated from hardware dependencies.
-
 ```bash
-# Run tests synchronously
-pytest -q
+# 1 ─ Clone
+git clone https://github.com/access-ai-smart-doorbell/Access-AI.git
+cd Access-AI
+
+# 2 ─ Virtual environment (Python 3.12)
+python3 -m venv .venv && source .venv/bin/activate
+
+# 3 ─ System libraries (Linux)
+sudo apt install -y espeak libportaudio2 ffmpeg build-essential python3-dev
+
+# 4 ─ Install all dependencies (preserves strict torch 2.4.1 pin)
+./scripts/install_deps.sh
+
+# 5 ─ (Optional) Cloud vision keys for scene description + OCR
+cp .env.example .env
+#   OPENAI_API_KEY=your_key_here
+
+# 6 ─ Launch 🚀
+python3 run.py
 ```
-
-### Test Coverage Highlights
-* `tests/test_context_engine.py`: Intent decision matrix & confidence score bounds.
-* `tests/test_accessibility.py`: Announcement text composition for all visitor scenarios.
-* `tests/test_voice_commands.py`: Pure intent parsing & query routing.
-* `tests/test_reid.py`: Cosine similarity feature matching across temporary SQLite galleries.
-* `tests/test_auto_enroll.py`: DBSCAN face vector clustering & prompt generation.
-
----
-
-## 🔍 System Verification & Real Components
-
-AccessAI operates with complete technical transparency. Every module is verified at boot time and reported via `/status`:
-
-| Subsystem Module | Production ONNX / Real Model | Fallback Component (If Model Absent) | Current Status |
-|:---|:---|:---|:---:|
-| **Face Biometrics** | InsightFace ArcFace (`buffalo_l`) | *None (Required)* | ✅ **Real Model Active** |
-| **Object Detection** | Ultralytics YOLOv8 (`yolov8n.pt`) | *None (Required)* | ✅ **Real Model Active** |
-| **Anti-Spoof Liveness** | Silent-Face MiniFASNet (`models/antispoof/`) | Laplacian Texture Heuristic | ✅ **Upgraded (ONNX Present)** |
-| **Visitor Re-ID** | OSNet Feature Extractor (`models/reid/`) | HSV Color Histogram | ✅ **Upgraded (ONNX Present)** |
-| **Wake-Word Engine** | Custom *"Hey Access"* (`models/wakeword/`) | Pretrained *"Hey Jarvis"* Phrase | ✅ **Upgraded (ONNX Present)** |
-| **Neural TTS** | Kokoro-ONNX (`models/kokoro/`) | Edge-TTS / System `espeak` | ✅ **Real Model Active** |
-| **Speech-To-Text** | OpenAI Whisper (Offline CPU) | Energy/RMS Audio Gate | ✅ **Real Model Active** |
-| **Cloud Vision** | Gemini 3.6 Flash / OpenAI API VLM | YOLO-only Perception | ✅ **Active (with API key)** |
-
----
-
-## 📁 Media Assets & Placeholders
-
-To populate the visual showcase with real screenshots from your installation:
-
-1. Create a `docs/assets/` directory if it does not exist:
-   ```bash
-   mkdir -p docs/assets
-   ```
-2. Save your web dashboard screenshot as `docs/assets/dashboard_preview.png`.
-3. Save your mobile app preview as `docs/assets/mobile_preview.png`.
-
----
-
-## 📄 License & Acknowledgments
-
-This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
-
-* Built with ❤️ for universal accessibility.
-* Powered by [FastAPI](https://fastapi.tiangolo.com/), [Ultralytics YOLOv8](https://ultralytics.com), [InsightFace](https://github.com/deepinsight/insightface), [Whisper](https://github.com/openai/whisper), and [Kokoro-ONNX](https://github.com/thewh1teagle/kokoro-onnx).
 
 <div align="center">
 
----
-**AccessAI** · Empowering Independence Through Intelligent Accessibility
+### 🌐 Open **`http://localhost:8000`** — your AccessAI dashboard is live!
+
+<br/>
+
+| Action | What Happens |
+|:---|:---|
+| 🔔 **Ring Doorbell** | Full perception pipeline: face → objects → anti-spoof → scene/OCR → speech → translation → re-ID → intent → announcement |
+| 🎤 **Speak a Command** | Push-to-talk voice interaction via Whisper |
+| 👂 **Always Listening** | Continuous wake-word detection ("Hey Access") |
+| 📊 **System Health** | Live module status with colour-coded indicators |
+
+</div>
+
+> **No webcam?** The app still runs headlessly — triggers fall back to a blank frame so events, snapshots, and history keep working.
+
+<br/>
+
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:161b22&height=2&section=header" width="100%"/>
+
+<br/>
+
+## 🗺️ Development Phases (1–17)
+
+<div align="center">
+
+Every phase is **100% implemented, tested, and functional** in this codebase.
+
+</div>
+
+| Phase | Capability | Key Modules | Status |
+|:---:|:---|:---|:---:|
+| **01** | 🏗️ Foundation — camera → `VisitorEvent` → snapshot → SQLite → dashboard | `pipeline` · `camera` · `database` · `server` | ✅ |
+| **02** | 👤 Deep Face Recognition (InsightFace ArcFace) | `face_module` | ✅ |
+| **03** | 📦 Object & Scene Detection (YOLOv8) + Intent Fusion | `vision_module` · `context_engine` | ✅ |
+| **04** | ♿ Accessibility Output — TTS + Blind/Deaf/Both routing | `accessibility` · `tts_module` | ✅ |
+| **05** | 🛡️ Anti-Spoofing & Liveness (MiniFASNet ONNX) | `antispoof_module` | ✅ |
+| **06** | ☁️ Cloud VLM Scene Description + Parcel OCR | `vlm_module` | ✅ |
+| **07** | 🎙️ Offline Speech Recognition (Whisper + Silero VAD) | `speech_module` | ✅ |
+| **08** | 🌐 Multi-Language Translation (11 Languages) | `translate_module` | ✅ |
+| **09** | 🔄 Visitor Re-ID + DBSCAN Auto-Enrollment | `reid_module` · `auto_enroll` | ✅ |
+| **10** | 🎯 Hands-Free Voice Commands + Wake Word | `wakeword_module` · `voice_commands` | ✅ |
+| **11** | 🗣️ Natural Offline Neural TTS (Kokoro-ONNX) | `tts_module` | ✅ |
+| **12** | ⚡ Async Background VLM Enrichment (Speed-up) | `pipeline` · `vlm_module` | ✅ |
+| **13** | 📸 Browser-Based Photo Enrollment | `server` · `face_module` | ✅ |
+| **14** | 📱 Responsive PWA Dashboard | `web/` | ✅ |
+| **15** | 👥 Multi-Person Group Scene Handling | `visitor_event` · `accessibility` | ✅ |
+| **16** | 📲 Native Flutter Mobile App | `mobile/` | ✅ |
+| **17** | 🔒 LAN Hardening — Auth, Rate Limits, HMAC, Motion | `server` · `motion_module` | ✅ |
+
+<br/>
+
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:161b22&height=2&section=header" width="100%"/>
+
+<br/>
+
+## 🎙️ Hands-Free Voice Commands
+
+<div align="center">
+
+For blind users, AccessAI provides **complete voice-driven control** requiring zero physical interaction.
+
+<br/>
+
+<a href="https://git.io/typing-svg"><img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&size=18&duration=2500&pause=800&color=2DD4BF&center=true&vCenter=true&repeat=true&width=500&lines=%22Hey+Access...+who+is+at+the+door%3F%22;%22Hey+Access...+recent+visitors%22;%22Hey+Access...+how+many+today%3F%22;%22Hey+Access...+set+blind+mode%22" alt="Voice Commands" /></a>
+
+</div>
+
+<br/>
+
+| 🗣️ Say This | ⚡ Intent | 📢 System Response |
+|:---|:---:|:---|
+| *"Who is at the door?"* | `who_is_there` | Captures frame → runs full pipeline → speaks announcement |
+| *"Analyze the door"* / *"What do you see?"* | `analyze_now` | Re-evaluates visual scene with detailed description |
+| *"Recent visitors"* / *"Who came earlier?"* | `recent` | Queries database → speaks latest visitor summary |
+| *"How many visitors today?"* | `count_today` | Counts today's events → announces total |
+| *"Open the camera"* | `open_camera` | Confirms & focuses live stream on dashboard |
+| *"Set blind / deaf mode"* | `set_mode` | Dynamically toggles accessibility output mode |
+| *(Any unknown phrase)* | `unknown` | Friendly spoken help listing available commands |
+
+> **Design:** `parse_command()` is a pure, unit-tested function (no I/O). `handle_command()` is the only place that touches the world. Voice **reuses** Phase-7 Whisper and Phase-4/11 TTS — it never duplicates capture or announcement logic.
+
+<br/>
+
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:161b22&height=2&section=header" width="100%"/>
+
+<br/>
+
+## 🌐 API Reference
+
+<div align="center">
+
+AccessAI exposes a full **RESTful + WebSocket** API via **FastAPI**:
+
+</div>
+
+| Method | Endpoint | Description |
+|:---:|:---|:---|
+| `GET` | `/` | 💻 Responsive web dashboard & PWA |
+| `GET` | `/video` | 📷 Live MJPEG video stream |
+| `POST` | `/trigger` | 🔔 Manual doorbell (full perception pipeline) |
+| `POST` | `/ring` | 🔗 Hardware webhook (optional JPEG + HMAC signature) |
+| `GET` | `/status` | 📊 Central health monitor (all modules + flags + torch version) |
+| `POST` | `/listen` | 🎤 Push-to-talk voice command |
+| `POST` | `/hear_visitor` | 👂 Record & transcribe visitor speech |
+| `GET` | `/history` | 📋 Visitor event history log |
+| `POST` | `/enroll` | 📸 Register face from uploaded photo |
+| `POST` | `/mode` | ♿ Switch accessibility mode |
+| `POST` | `/user_language` | 🌐 Change output language |
+| `POST` | `/reply` | 💬 Two-way reply (TTS at door) |
+| `WS` | `/events` | ⚡ Real-time event & voice broadcast stream |
+
+<br/>
+
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:161b22&height=2&section=header" width="100%"/>
+
+<br/>
+
+## 🌍 Supported Languages
+
+<div align="center">
+
+AccessAI supports **11 languages** for speech recognition, translation, and voice output:
+
+<br/>
+
+| | | | | |
+|:---:|:---:|:---:|:---:|:---:|
+| 🇺🇸 **English** | 🇮🇳 **Hindi** | 🇮🇳 **Malayalam** | 🇮🇳 **Tamil** | 🇮🇳 **Telugu** |
+| 🇮🇳 **Kannada** | 🇮🇳 **Bengali** | 🇮🇳 **Marathi** | 🇮🇳 **Gujarati** | 🇮🇳 **Punjabi** |
+| 🇮🇳 **Urdu** | | | | |
+
+</div>
+
+Each language has a dedicated **neural voice** (e.g., `ml-IN-SobhanaNeural`, `hi-IN-SwaraNeural`) ensuring natural native pronunciation.
+
+<br/>
+
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:161b22&height=2&section=header" width="100%"/>
+
+<br/>
+
+## ⚙️ Configuration
+
+All system options are centralized in **[`config.py`](config.py)** — later phases only flip a flag or change a value; they never scatter config.
+
+```python
+# ─── Accessibility ──────────────────────────────────────────────
+ACCESSIBILITY_MODE = "both"              # "blind" | "deaf" | "both"
+USER_LANGUAGE     = "ml"                 # en, hi, ml, ta, te, kn, bn, mr, gu, pa, ur
+
+# ─── Feature Flags ─────────────────────────────────────────────
+ENABLE_FACE       = True                 # InsightFace ArcFace recognition
+ENABLE_VISION     = True                 # YOLOv8 object detection
+ENABLE_ANTISPOOF  = True                 # MiniFASNet liveness checks
+ENABLE_VLM        = True                 # Cloud VLM scene descriptions
+ENABLE_SPEECH     = True                 # Whisper speech recognition
+ENABLE_TRANSLATE  = True                 # Multi-language translation
+ENABLE_REID       = True                 # OSNet 24-hour appearance tracking
+ENABLE_AUTOENROLL = True                 # DBSCAN frequent stranger clustering
+ENABLE_WAKEWORD   = True                 # Hands-free voice commands
+ENABLE_MOTION     = True                 # Software motion trigger
+
+# ─── ESP32-CAM (One-Line Swap) ─────────────────────────────────
+CAMERA_SOURCE     = 0                    # 0 = laptop webcam
+# CAMERA_SOURCE   = "http://192.168.1.50:81/stream"   # ← ESP32-CAM
+```
+
+> Turn **any feature off** and the app still runs — it simply reports that module as `off` in `/status`.
+
+<br/>
+
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:161b22&height=2&section=header" width="100%"/>
+
+<br/>
+
+## 🧪 Testing & Verification
+
+```bash
+pytest -q
+```
+
+The suite covers all **pure logic** — no camera, mic, network, or TTS is touched:
+
+| Test File | Coverage |
+|:---|:---|
+| `test_context_engine.py` | Intent decision matrix & confidence bounds |
+| `test_accessibility.py` | Announcement composition for all visitor scenarios |
+| `test_voice_commands.py` | Pure intent parsing & command routing |
+| `test_reid.py` | Cosine similarity matching across temp SQLite galleries |
+| `test_auto_enroll.py` | DBSCAN face clustering & prompt generation |
+| `test_database.py` | Storage layer CRUD operations |
+| `test_server_security.py` | Auth middleware & rate limiting |
+| `test_motion.py` | Motion detection threshold & cooldown logic |
+
+<br/>
+
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:161b22&height=2&section=header" width="100%"/>
+
+<br/>
+
+## 🔍 Component Verification Matrix
+
+<div align="center">
+
+Every module is verified at boot and reported via `GET /status` and the System Health panel:
+
+</div>
+
+| Module | Production Model | Fallback (if absent) | Status |
+|:---|:---|:---|:---:|
+| **Face Biometrics** | InsightFace ArcFace `buffalo_l` | — | ✅ Active |
+| **Object Detection** | YOLOv8 Nano `yolov8n.pt` | — | ✅ Active |
+| **Anti-Spoof** | Silent-Face MiniFASNet ONNX | Laplacian texture heuristic | ✅ **Upgraded** |
+| **Visitor Re-ID** | OSNet `osnet_x0_25.onnx` | HSV color histogram | ✅ **Upgraded** |
+| **Wake Word** | Custom "Hey Access" `.onnx` | Pretrained "Hey Jarvis" | ✅ **Upgraded** |
+| **Neural TTS** | Kokoro-ONNX v1.0 | Edge-TTS → pyttsx3/espeak | ✅ Active |
+| **Speech-to-Text** | OpenAI Whisper (offline CPU) | Energy/RMS gate | ✅ Active |
+| **Cloud Vision** | Gemini 3.6 Flash / OpenAI API | YOLO-only perception | ✅ Active* |
+
+> \* Cloud VLM requires an API key in `.env`. Without it, the app uses YOLO-only signals — never blocked.
+
+<br/>
+
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:161b22&height=2&section=header" width="100%"/>
+
+<br/>
+
+## 📐 Design Principles
+
+<div align="center">
+<table>
+<tr>
+<td align="center" width="20%">
+<br/>
+
+**🦴 Event Spine**
+
+The `VisitorEvent` is the backbone. Fill fields; never restructure.
+
+<br/>
+</td>
+<td align="center" width="20%">
+<br/>
+
+**⚙️ Central Config**
+
+All tunables in `config.py`. Every feature behind a flag.
+
+<br/>
+</td>
+<td align="center" width="20%">
+<br/>
+
+**🛡️ Graceful Degradation**
+
+Optional modules never crash the app.
+
+<br/>
+</td>
+<td align="center" width="20%">
+<br/>
+
+**📷 Single Camera**
+
+Frames flow only through `camera.py`.
+
+<br/>
+</td>
+<td align="center" width="20%">
+<br/>
+
+**🗣️ Conservative Language**
+
+"Likely", "appears to be" — never "definitely".
+
+<br/>
+</td>
+</tr>
+</table>
+</div>
+
+<br/>
+
+<img src="https://capsule-render.vercel.app/api?type=rect&color=0:0d1117,100:161b22&height=2&section=header" width="100%"/>
+
+<br/>
+
+## 📄 License
+
+This project is licensed under the **MIT License** — see [LICENSE](LICENSE) for details.
+
+<br/>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- ANIMATED FOOTER BANNER                                                 -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+
+<div align="center">
+
+<a href="https://git.io/typing-svg"><img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=500&size=16&duration=4000&pause=2000&color=58A6FF&center=true&vCenter=true&repeat=true&width=600&lines=Built+with+%E2%9D%A4%EF%B8%8F+for+universal+accessibility;Empowering+independence+through+intelligent+technology;Blind+Mode+%C2%B7+Deaf+Mode+%C2%B7+11+Languages+%C2%B7+17+Phases" alt="Footer" /></a>
+
+<br/><br/>
+
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:0d1117,25:1a1b4b,50:2d1b69,75:1e3a5f,100:0d1117&height=120&section=footer" width="100%"/>
+
 </div>
