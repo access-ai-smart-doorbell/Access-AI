@@ -17,24 +17,28 @@
 <br/>
 
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
-<!-- BADGES ROW 1 — Core Tech                                               -->
+<!-- BADGES                                                                 -->
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
 
+<!-- Row 1 — Core AI -->
 <p>
-<img src="https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python"/>
-<img src="https://img.shields.io/badge/FastAPI-0.115-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI"/>
+<img src="https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python"/>&nbsp;
+<img src="https://img.shields.io/badge/FastAPI-0.115-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI"/>&nbsp;
 <img src="https://img.shields.io/badge/YOLOv8-Ultralytics-00FFFF?style=for-the-badge&logo=yolo&logoColor=black" alt="YOLOv8"/>
-<img src="https://img.shields.io/badge/InsightFace-ArcFace-7C3AED?style=for-the-badge" alt="InsightFace"/>
-<img src="https://img.shields.io/badge/Whisper-Offline-FF6F00?style=for-the-badge&logo=openai&logoColor=white" alt="Whisper"/>
 </p>
 
-<!-- BADGES ROW 2 — Status -->
-
+<!-- Row 2 — AI + Voice -->
 <p>
-<img src="https://img.shields.io/badge/Phases-17%2F17%20Complete-10B981?style=for-the-badge&logo=checkmarx&logoColor=white" alt="Phases"/>
-<img src="https://img.shields.io/badge/Languages-11%20Supported-F59E0B?style=for-the-badge&logo=googletranslate&logoColor=white" alt="Languages"/>
-<img src="https://img.shields.io/badge/Tests-Pytest%20Suite-0EA5E9?style=for-the-badge&logo=pytest&logoColor=white" alt="Tests"/>
-<img src="https://img.shields.io/badge/TTS-Kokoro%20Neural-E040FB?style=for-the-badge&logo=audiomack&logoColor=white" alt="TTS"/>
+<img src="https://img.shields.io/badge/InsightFace-ArcFace-7C3AED?style=for-the-badge" alt="InsightFace"/>&nbsp;
+<img src="https://img.shields.io/badge/Whisper-Offline_STT-FF6F00?style=for-the-badge&logo=openai&logoColor=white" alt="Whisper"/>&nbsp;
+<img src="https://img.shields.io/badge/TTS-Kokoro_Neural-E040FB?style=for-the-badge&logo=audiomack&logoColor=white" alt="TTS"/>
+</p>
+
+<!-- Row 3 — Status -->
+<p>
+<img src="https://img.shields.io/badge/Phases-17%2F17_Complete-10B981?style=for-the-badge&logo=checkmarx&logoColor=white" alt="Phases"/>&nbsp;
+<img src="https://img.shields.io/badge/Languages-11_Supported-F59E0B?style=for-the-badge&logo=googletranslate&logoColor=white" alt="Languages"/>&nbsp;
+<img src="https://img.shields.io/badge/Tests-Pytest_Suite-0EA5E9?style=for-the-badge&logo=pytest&logoColor=white" alt="Tests"/>&nbsp;
 <img src="https://img.shields.io/badge/License-MIT-EF4444?style=for-the-badge&logo=opensourceinitiative&logoColor=white" alt="License"/>
 </p>
 
