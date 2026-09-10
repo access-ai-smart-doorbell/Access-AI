@@ -12,9 +12,8 @@
 
 <br/>
 
-<a href="https://git.io/typing-svg"><img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=600&size=22&duration=3000&pause=1000&color=58A6FF&center=true&vCenter=true&multiline=true&repeat=true&width=800&height=80&lines=%E2%9C%A8+Perceives+visitors+%7C+Speaks+announcements+%7C+11+languages;%F0%9F%91%81%EF%B8%8F+Blind+Mode+%7C+%F0%9F%91%82+Deaf+Mode+%7C+%F0%9F%8C%93+Both+Mode;%F0%9F%8E%99%EF%B8%8F+%22Hey+Access...+who+is+at+the+door%3F%22" alt="Typing SVG" /></a>
+<a href="https://git.io/typing-svg"><img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=600&size=24&duration=3000&pause=1200&color=58A6FF&center=true&vCenter=true&repeat=true&width=900&height=45&lines=%E2%9C%A8+Perceives+visitors+%7C+Speaks+announcements+%7C+11+languages;%F0%9F%91%81%EF%B8%8F+Blind+Mode+%7C+%F0%9F%91%82+Deaf+Mode+%7C+%F0%9F%8C%93+Both+Mode;%F0%9F%8E%99%EF%B8%8F+%22Hey+Access...+who+is+at+the+door%3F%22" alt="Typing SVG" /></a>
 
-<br/>
 
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
 <!-- BADGES                                                                 -->
