@@ -17,6 +17,12 @@ import os
 import time
 import threading
 import traceback
+import warnings
+
+# Suppress InsightFace's FutureWarning about the deprecated skimage.transform
+# .estimate() API — it fires on every pipeline event and is not actionable by
+# the user (it's inside the insightface library itself).
+warnings.filterwarnings("ignore", category=FutureWarning, module="insightface")
 
 import uvicorn
 
@@ -46,9 +52,11 @@ from accessai.pipeline import Pipeline
 from accessai.wakeword_module import WakeWordModule
 from accessai import voice_commands
 from accessai.server import make_app, LatestFrame
+from accessai.video_recorder import EventVideoRecorder
 
 
-def camera_loop(latest: LatestFrame, stop_event: threading.Event) -> None:
+def camera_loop(latest: LatestFrame, stop_event: threading.Event,
+                recorder: "EventVideoRecorder | None" = None) -> None:
     """Continuously read frames and publish the newest one. Never crashes."""
     print(f"[Camera] Opening source: {config.CAMERA_SOURCE}")
     while not stop_event.is_set():
@@ -64,6 +72,10 @@ def camera_loop(latest: LatestFrame, stop_event: threading.Event) -> None:
                     print("[Camera] Read failed, reconnecting...")
                     break
                 latest.set(frame)
+                # Feed every frame into the circular pre-roll buffer so clips
+                # include footage from BEFORE the person appeared.
+                if recorder is not None:
+                    recorder.push_frame(frame)
         except Exception as e:
             print(f"[Camera] Error: {e}")
             traceback.print_exc()
@@ -184,12 +196,18 @@ def main() -> None:
     vlm = None
     ocr = None
     if config.ENABLE_VLM:
-        keys = (os.environ.get("GEMINI_API_KEY")
-                or os.environ.get("GROQ_API_KEY")
-                or os.environ.get("OPENAI_API_KEY")
-                or os.environ.get("GITHUB_MODELS_KEYS")
-                or getattr(config, "VLM_API_KEYS", "")
-                or config.GITHUB_MODELS_KEYS)
+        keys = (os.environ.get("GEMINI_API_KEY", "")
+                or os.environ.get("OPENAI_API_KEY", "")
+                or getattr(config, "VLM_API_KEYS", ""))
+
+        # Fallback model chain (same endpoint, different quota pools):
+        # Primary → lite variants that have separate quota limits.
+        extra_models = getattr(config, "VLM_FALLBACK_MODELS", [
+            "gemini-3.5-flash-lite",
+            "gemini-3.1-flash-lite",
+            "gemini-flash-lite-latest",
+        ])
+
         vlm = VLMModule(keys,
                         base_url=config.VLM_BASE_URL,
                         model=config.VLM_MODEL,
@@ -197,7 +215,9 @@ def main() -> None:
                         max_tokens=config.VLM_MAX_TOKENS,
                         temperature=config.VLM_TEMPERATURE,
                         jpeg_quality=config.VLM_JPEG_QUALITY,
-                        max_image_width=config.VLM_MAX_IMAGE_WIDTH)
+                        max_image_width=config.VLM_MAX_IMAGE_WIDTH,
+                        extra_models=extra_models,
+                        extra_providers=getattr(config, "VLM_EXTRA_PROVIDERS", []))
         if config.ENABLE_OCR:
             ocr = OCRModule(vlm=vlm)
         avail = "available" if vlm.available() else "unavailable (YOLO-only)"
@@ -243,10 +263,12 @@ def main() -> None:
                     user_language = _saved
         except Exception as _e:
             print(f"[AccessAI] could not read saved user_language: {_e}")
+        groq_keys = os.environ.get("GROQ_API_KEY", "")
         translate = TranslateModule(backend=config.TRANSLATE_BACKEND,
                                     user_language=user_language,
                                     language_names=config.LANGUAGE_NAMES,
-                                    vlm=vlm)
+                                    vlm=vlm,
+                                    groq_keys=groq_keys)
         avail = "available" if translate.available() else "passthrough (original)"
         print(f"[AccessAI] Translate: {translate.backend_name()} -> "
               f"{translate.lang_name(user_language)} | {avail}")
@@ -340,10 +362,28 @@ def main() -> None:
                         access=access, cooldown=config.EVENT_COOLDOWN)
     latest = LatestFrame()
 
+    # --- Event video recorder (Phase 18) ---
+    # Circular-buffer MP4 clip recorder: saves 10s-before + event + 8s-after
+    # for every person detection. Runs fully in background threads.
+    recorder = None
+    if getattr(config, "ENABLE_VIDEO_CLIPS", True):
+        try:
+            recorder = EventVideoRecorder(
+                clips_dir=getattr(config, "VIDEO_CLIPS_DIR", "data/clips"),
+                fps=getattr(config, "VIDEO_CLIPS_FPS", 15),
+                pre_roll_sec=getattr(config, "VIDEO_PRE_ROLL_SEC", 10),
+                post_roll_sec=getattr(config, "VIDEO_POST_ROLL_SEC", 8),
+                min_event_sec=getattr(config, "VIDEO_MIN_EVENT_SEC", 1.0),
+                retain_days=getattr(config, "VIDEO_RETAIN_DAYS", 7),
+                max_clips=getattr(config, "VIDEO_MAX_CLIPS", 500),
+            )
+        except Exception as _e:
+            print(f"[AccessAI] Video recorder init failed (clips disabled): {_e}")
+
     # --- Camera thread ---
     stop_event = threading.Event()
     cam_thread = threading.Thread(
-        target=camera_loop, args=(latest, stop_event), daemon=True
+        target=camera_loop, args=(latest, stop_event, recorder), daemon=True
     )
     cam_thread.start()
 
@@ -398,6 +438,10 @@ def main() -> None:
     # still updates the DB; the dashboard just picks it up on the next refresh.
     pipeline._enrich_broadcast = getattr(app.state, "broadcast_threadsafe", None)
 
+    # Phase 18: expose the video recorder on app.state so /clips endpoints can
+    # access it. None when recording is disabled.
+    app.state.recorder = recorder
+
     # Phase 10: now that the app (and its thread-safe broadcast bridge) exist,
     # wire the wake callback. On a detection it runs the SAME voice interaction as
     # /listen (capture -> parse -> act -> speak) and pushes the result to any open
@@ -449,6 +493,30 @@ def main() -> None:
             if bridge is not None:
                 from accessai.server import _jsonify
                 bridge({"type": "event", "event": _jsonify(ev.to_dict())})
+            # Video clip recording: signal recorder based on whether any
+            # person was actually detected in this pipeline run.
+            if recorder is not None:
+                if ev.visitor_count > 0 or ev.people:
+                    person_name = "Unknown"
+                    recognized = False
+                    if ev.identity and ev.identity.known:
+                        person_name = ev.identity.name
+                        recognized = True
+                    elif ev.people:
+                        known_p = next((p for p in ev.people if p.known), None)
+                        if known_p:
+                            person_name = known_p.name
+                            recognized = True
+                    recorder.on_person_detected({
+                        "event_id":   ev.event_id,
+                        "timestamp":  ev.timestamp,
+                        "person":     person_name,
+                        "recognized": recognized,
+                        "location":   "front_door",
+                        "trigger":    ev.trigger,
+                    })
+                else:
+                    recorder.on_person_gone()
 
         motion.set_on_motion(_on_motion)
         motion.start()

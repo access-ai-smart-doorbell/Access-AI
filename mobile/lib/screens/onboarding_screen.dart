@@ -78,10 +78,13 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       _testedButFailed = false;
     });
 
-    final token = ref.read(prefsProvider).authToken;
+    final prefs = ref.read(prefsProvider);
+    final token = prefs.authToken;
+    final knownUrl = prefs.baseUrl; // try last-known IP first
 
     final found = await DiscoveryService.scan(
       token: token,
+      knownIp: knownUrl.isNotEmpty ? knownUrl : null,
       onProgress: (p) {
         if (mounted) {
           setState(() {

@@ -25,8 +25,11 @@ a missing frame, or a None module all resolve to a polite spoken sentence.
 """
 
 import datetime as _dt
+import logging
 
 import numpy as np
+
+logger = logging.getLogger("voice_commands")
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +225,8 @@ def _analyze_current_frame(pipeline, latest) -> str:
     if latest is not None:
         try:
             frame = latest.get()
-        except Exception:
+        except Exception as e:
+            logger.debug("latest.get() failed: %s", e)
             frame = None
     if frame is None:
         frame = _fallback_frame()
@@ -242,7 +246,8 @@ def _current_frame(latest):
         return None
     try:
         return latest.get()
-    except Exception:
+    except Exception as e:
+        logger.debug("latest.get() failed: %s", e)
         return None
 
 
@@ -326,7 +331,8 @@ def _recent_grounding(db, max_age_seconds: int = 180) -> str:
         return ""
     try:
         rows = db.recent_events(limit=1)
-    except Exception:                                     # pragma: no cover
+    except Exception as e:                                     # pragma: no cover
+        logger.debug("recent_events() failed: %s", e)
         return ""
     if not rows:
         return ""
@@ -335,7 +341,8 @@ def _recent_grounding(db, max_age_seconds: int = 180) -> str:
         then = _dt.datetime.fromisoformat(ev.get("timestamp", ""))
         if (_dt.datetime.now() - then).total_seconds() > max_age_seconds:
             return ""
-    except Exception:
+    except Exception as e:
+        logger.debug("isoformat parse failed: %s", e)
         return ""
     bits = []
     ident = ev.get("identity") or {}
@@ -392,7 +399,8 @@ def _set_mode(access, mode) -> str:
                 "mode, or both mode.")
     try:
         access.set_mode(mode)
-    except Exception:                                     # pragma: no cover
+    except Exception as e:                                     # pragma: no cover
+        logger.debug("set_mode failed: %s", e)
         return "Sorry, I couldn't change the mode."
     return f"Accessibility mode set to {mode}."
 
@@ -456,7 +464,8 @@ def _time_phrase(ts: str) -> str:
     """A short, human 'x minutes ago' phrase from an ISO timestamp."""
     try:
         then = _dt.datetime.fromisoformat(ts)
-    except Exception:
+    except Exception as e:
+        logger.debug("isoformat parse failed: %s", e)
         return "recently"
     delta = _dt.datetime.now() - then
     secs = int(delta.total_seconds())

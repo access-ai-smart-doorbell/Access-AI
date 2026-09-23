@@ -184,6 +184,14 @@ class AntiSpoofModule:
     def backend_name(self) -> str:
         return self._backend_name
 
+    def is_heuristic(self) -> bool:
+        """True when the active backend is the placeholder heuristic.
+
+        The UI should show an amber warning when this returns True — the heuristic
+        is NOT production-grade and can be trivially bypassed with a quality print.
+        """
+        return self._backend_name == "heuristic"
+
     # ------------------------------------------------------------------
     def score(self, frame_bgr, box) -> float:
         """Return the 'real person' probability in [0,1] for the face at `box`.
@@ -210,6 +218,11 @@ class AntiSpoofModule:
             if self._backend_name == "silent-face-pip":
                 return self._score_pip(frame_bgr, box, crop)
             if self._backend_name == "heuristic":
+                if not getattr(self, "_warned_heuristic", False):
+                    self._warned_heuristic = True
+                    print("[AntiSpoofModule] ⚠ HEURISTIC liveness is active — this is "
+                          "NOT real security. A quality photo/screen WILL bypass it. "
+                          "Drop MiniFASNet ONNX models into models/antispoof/ to fix.")
                 return self._score_heuristic(crop)
         except Exception as e:                            # pragma: no cover
             # Any inference error is fail-open, not a crash.

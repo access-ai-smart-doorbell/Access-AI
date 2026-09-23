@@ -218,21 +218,29 @@ class _DoorbellAlertState extends State<DoorbellAlert>
                         Expanded(
                           child: ListView(
                             children: [
-                              if (e.people.isEmpty)
-                                Text(
-                                  e.sceneSummary.isNotEmpty
-                                      ? e.sceneSummary
-                                      : 'Motion detected at the door.',
-                                  style: text.bodyLarge,
-                                )
-                              else
-                                for (final p in e.people)
-                                  Padding(
-                                    padding:
-                                        const EdgeInsets.only(bottom: T.s16),
-                                    child: PersonTile(
-                                        person: p, reidSeen: e.reidSeenCount),
+                              if (e.sceneSummary.isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: T.s16),
+                                  child: Text(
+                                    e.sceneSummary,
+                                    style: text.bodyLarge,
                                   ),
+                                )
+                              else if (e.people.isEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: T.s16),
+                                  child: Text(
+                                    'Motion detected at the door.',
+                                    style: text.bodyLarge,
+                                  ),
+                                ),
+                              for (final p in e.people)
+                                Padding(
+                                  padding:
+                                      const EdgeInsets.only(bottom: T.s16),
+                                  child: PersonTile(
+                                      person: p, reidSeen: e.reidSeenCount),
+                                ),
                               if (e.hasSpeech) ...[
                                 const SizedBox(height: T.s8),
                                 Text('They said:',

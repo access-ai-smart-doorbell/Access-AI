@@ -63,6 +63,8 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
   void dispose() {
     _speech.stop();
     _typed.dispose();
+    // Resume wake word if we paused it and the screen is being closed.
+    ref.read(wakeWordServiceProvider).resume();
     super.dispose();
   }
 
@@ -70,9 +72,13 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
     if (_listening) {
       await _speech.stop();
       if (mounted) setState(() => _listening = false);
+      // Resume wake word now that our STT session is done.
+      ref.read(wakeWordServiceProvider).resume();
       if (_partial.trim().isNotEmpty) await _ask(_partial);
       return;
     }
+    // Pause wake word so the two STT engines don't compete.
+    await ref.read(wakeWordServiceProvider).pause();
     setState(() {
       _partial = '';
       _answer = '';
@@ -85,6 +91,8 @@ class _VoiceScreenState extends ConsumerState<VoiceScreen> {
         setState(() => _partial = r.recognizedWords);
         if (r.finalResult) {
           setState(() => _listening = false);
+          // Resume wake word before processing the answer.
+          ref.read(wakeWordServiceProvider).resume();
           if (r.recognizedWords.trim().isNotEmpty) _ask(r.recognizedWords);
         }
       },

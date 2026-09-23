@@ -255,10 +255,6 @@ ANTISPOOF_BACKEND = "auto"
 # Get an OpenAI API key from https://platform.openai.com/api-keys and set it
 # in .env. Multiple comma-separated keys enable automatic failover.
 #
-# NOTE: GitHub Models was retired on July 30 2026 (HTTP 410). If you have old
-# GITHUB_MODELS_KEYS set they will still be tried, but will fail. Migrate to
-# OPENAI_API_KEY.
-GITHUB_MODELS_KEYS = ""                       # DEPRECATED - use OPENAI_API_KEY
 VLM_API_KEYS = ""                             # keep empty; use .env instead
 # OpenAI-compatible chat completions endpoint. Any provider that speaks the
 # same format works (Azure OpenAI, Groq, Together AI, local vLLM, etc.).
@@ -266,7 +262,7 @@ VLM_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 VLM_MODEL = "gemini-3.6-flash"                 # Gemini vision model; fast,
                                               #   excellent at image understanding,
                                               #   no thinking overhead.
-VLM_TIMEOUT = 12                              # seconds per HTTP request (Phase 12:
+VLM_TIMEOUT = 30                              # seconds per HTTP request (Phase 12:
                                               #   lowered 20->12 so a slow/dead key
                                               #   fails over fast and never stalls
                                               #   the doorbell past the speed target)
@@ -280,6 +276,11 @@ VLM_ONLY_FOR_UNKNOWN = False                  # Phase 16: describe KNOWN people 
                                               #   frame IS sent to the cloud VLM.
                                               #   Set True to keep known faces off
                                               #   the API (name-only announcements).
+VLM_COOLDOWN = 60                             # Minimum seconds between VLM calls
+                                              #   on the same pipeline run. Rapid
+                                              #   motion events are skipped until
+                                              #   the cooldown expires, preventing
+                                              #   Gemini free-tier 429 spam.
 # Phase 12 (SPEED): for an UNKNOWN visitor, SPEAK a FAST local announcement first
 # (InsightFace age/gender + YOLO carried objects + intent), then run the richer
 # VLM appearance call in a BACKGROUND thread and update the stored event +
@@ -358,11 +359,11 @@ VISITOR_LISTEN_SECONDS = 6
 # USER_LANGUAGE (defined in the Accessibility section above) is the target code.
 #
 # Backend priority (all behind the SAME TranslateModule interface):
-#   "github" -> PREFERRED, torch-safe. Reuses the Phase-6 GitHub Models keys +
+#   "github" -> PREFERRED, torch-safe. Reuses the Phase-6 VLM keys +
 #               failover for a text-only translation call. Adds NO dependency and
 #               NEVER moves torch. Needs network + keys; degrades to passthrough.
-#   "local"  -> offline MT (NLLB / IndicTrans2). HEAVY, risks pulling torch; only
-#               use after pinning torch and re-checking YOLO. OFF by default.
+#   "groq"   -> Groq cloud LLM (llama-3.1-8b-instant). Free tier, fast, torch-free.
+#               Set GROQ_API_KEY in .env. Degrades to passthrough if missing.
 #   "none"   -> passthrough: return the original text unchanged (honest fallback).
 TRANSLATE_BACKEND = "github"
 # ISO code -> human name, used both in the translation prompt and the UI selector.
@@ -544,4 +545,35 @@ VOICE_CHOICES = [
     {"id": "edge:en-US-AriaNeural",   "label": "Aria (female) — online neural"},
     {"id": "edge:en-IN-NeerjaNeural", "label": "Neerja (female, Indian) — online"},
     {"id": "edge:hi-IN-SwaraNeural",  "label": "Swara (Hindi female) — online"},
+]
+
+# ── Phase 18: Event Video Clip Recorder ──────────────────────────────────────
+ENABLE_VIDEO_CLIPS  = True          # set False to disable all clip recording
+VIDEO_CLIPS_DIR     = "data/clips"  # directory to save MP4 clips + JSON metadata
+VIDEO_CLIPS_FPS     = 15            # frames per second in saved clips
+VIDEO_PRE_ROLL_SEC  = 10            # seconds of footage BEFORE detection
+VIDEO_POST_ROLL_SEC = 8             # seconds of footage AFTER person disappears
+VIDEO_MIN_EVENT_SEC = 1.0           # minimum event length to save a clip
+VIDEO_RETAIN_DAYS   = 7             # auto-delete clips older than N days
+VIDEO_MAX_CLIPS     = 500           # hard cap on total saved clips
+
+# ── Phase 18: VLM Multi-Model Fallback ───────────────────────────────────────
+# When the primary VLM_MODEL hits quota/503, AccessAI tries each model below
+# in order. All use the same GEMINI_API_KEY and base URL — they have
+# independent quota pools so a rate-limited main model falls over instantly.
+VLM_FALLBACK_MODELS = [
+    "gemini-3.5-flash-lite",     # ✅ tested working, separate quota
+    "gemini-3.1-flash-lite",     # ✅ tested working, separate quota
+    "gemini-flash-lite-latest",  # ✅ tested working, always latest lite
+]
+
+# For completely different API providers (OpenRouter, Together, etc.)
+# Add entries here as: {"base_url": "...", "model": "...", "keys": "key1,key2"}
+VLM_EXTRA_PROVIDERS = [
+    # Example (add your OpenRouter key to .env as OPENROUTER_API_KEY):
+    # {
+    #     "base_url": "https://openrouter.ai/api/v1",
+    #     "model": "google/gemini-flash-1.5",
+    #     "keys": os.environ.get("OPENROUTER_API_KEY", ""),
+    # },
 ]

@@ -174,6 +174,10 @@ class WakeWordNotifier extends Notifier<bool> {
     } else {
       await ref.read(wakeWordServiceProvider).stop();
       state = false;
+      // Update notification: no longer listening for wake word.
+      ref
+          .read(backgroundAlertServiceProvider)
+          .updateWakeWordState(active: false);
       return false;
     }
   }
@@ -215,6 +219,11 @@ class WakeWordNotifier extends Notifier<bool> {
     };
     await svc.start();
     state = true;
+    // Update the persistent foreground service notification to tell the user
+    // that "Hey Access" is now listening in the background.
+    ref
+        .read(backgroundAlertServiceProvider)
+        .updateWakeWordState(active: true);
     return true;
   }
 }

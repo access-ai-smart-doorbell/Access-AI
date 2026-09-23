@@ -57,8 +57,13 @@ class Person:
     box: tuple = (0, 0, 0, 0)          # (x1, y1, x2, y2) face box
     is_spoof: bool = False             # this face looked like a photo/screen
     spoof_score: float = 1.0           # 1.0 = real, 0.0 = certain spoof
-    appearance: str = ""               # VLM clothing/carried line (unknown only)
-    expression: str = ""               # cautious mood cue (unknown only), e.g. "calm"
+    appearance: str = ""               # VLM combined appearance line (legacy compat)
+    expression: str = ""               # cautious mood cue, e.g. "calm"
+    # New spatial/VLM fields (Phase 17+) — populated by _apply_vlm_result
+    position: str = ""                 # "left" | "center" | "right" | "directly in front"
+    clothing: str = ""                 # clothing type + colour, e.g. "blue T-shirt, jeans"
+    action: str = ""                   # what person is doing, e.g. "walking toward camera"
+    carrying: str = ""                 # held objects, e.g. "backpack, phone"
 
 
 @dataclass

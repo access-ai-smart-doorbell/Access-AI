@@ -12,8 +12,11 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <!-- Android 14+ requires a typed foreground service. dataSync is the
-         correct type for holding a network connection to the doorbell open. -->
+         correct type for holding a network connection to the doorbell open.
+         microphone is required for wake word ("Hey Access") to work while
+         the app is backgrounded on Android 14+. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <!-- Resume listening after a reboot, so the doorbell isn't silently dead
          until someone remembers to open the app. -->

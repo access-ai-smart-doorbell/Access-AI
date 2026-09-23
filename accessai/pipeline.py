@@ -127,6 +127,9 @@ class Pipeline:
         self._cooldown = float(cooldown)
         self._last_spoken_text = ""
         self._last_spoken_at = 0.0
+        # VLM pipeline-level rate-limit: track when VLM was last called so
+        # rapid motion events respect the VLM_COOLDOWN without hammering the API.
+        self._last_vlm_time = 0.0
         # Concurrency: /trigger, /ring, and the wake-word thread can all reach
         # run_once at the same time (each on its own executor thread). One lock
         # serializes whole runs - the pipeline mutates shared state (cooldown
@@ -288,9 +291,15 @@ class Pipeline:
         skip_known = self.vlm_only_for_unknown and not has_unknown
         something_present = (ev.visitor_count > 0 or bool(ev.detected_objects)
                              or ev.face_box != (0, 0, 0, 0))
+        # Pipeline-level VLM cooldown: skip if called too recently to avoid
+        # hammering the Gemini free tier on rapid motion events.
+        _VLM_COOLDOWN = 60.0  # seconds; mirrors config.VLM_COOLDOWN
+        _now = _time.monotonic()
+        vlm_cooldown_ok = (_now - self._last_vlm_time) >= _VLM_COOLDOWN
         vlm_wanted = (self.vlm_enabled and self.vlm is not None
                       and self.vlm.available() and not ev.is_spoof
-                      and not skip_known and something_present)
+                      and not skip_known and something_present
+                      and vlm_cooldown_ok)
         # Defer whenever the VLM will run: the fast local announcement (name, or
         # age/gender for unknowns) is spoken NOW and the VLM description - for
         # known and unknown alike - follows in the background enrich. A LOCAL
@@ -298,6 +307,7 @@ class Pipeline:
         # field it raced concurrent runs before the run lock existed.
         defer_vlm = bool(vlm_wanted and self.vlm_async_enrich)
         if vlm_wanted and not defer_vlm:
+            self._last_vlm_time = _time.monotonic()
             result = self.vlm.describe_and_read(
                 frame_bgr, facts=self._vlm_facts(ev))
             self._apply_vlm_result(ev, result)
@@ -447,48 +457,52 @@ class Pipeline:
         The local face + YOLO detectors are far more reliable at COUNTING and
         IDENTIFYING people than the cloud VLM (which, ungrounded, invents extra
         people and swaps clothing between them). We hand the model the exact
-        person count, how many are known-by-name vs unknown, and the detected /
-        carried objects so it describes exactly those people and stops
-        hallucinating. Pure/read-only - no model calls, safe for the async path.
+        person count, known names with spatial positions (so the VLM can write
+        'Vinay is on the left'), and the detected/carried objects.
+        Pure/read-only - no model calls, safe for the async path.
         """
         total = int(ev.visitor_count or 0)
         known_names = [p.name for p in ev.people if p.known and p.name
                        and p.name != "Unknown"]
         faces = len(ev.people)
-        unknown = max(0, total - len(known_names))
         parts = []
         if total > 0:
             head = f"{total} " + ("person" if total == 1 else "people")
-            detail = []
-            if known_names:
-                detail.append("known: " + ", ".join(known_names))
-            if unknown > 0:
-                detail.append(f"{unknown} unknown")
-            if detail:
-                head += " (" + "; ".join(detail) + ")"
             parts.append(head)
+            # Per-person grounding: name + spatial position derived from face box
+            # so the VLM can write spatially accurate sentences.
+            for p in ev.people:
+                label = p.name if (p.known and p.name and p.name != "Unknown") \
+                        else "unknown person"
+                pos_hint = ""
+                if p.box and len(p.box) >= 4 and ev.snapshot_path:
+                    # Rough left/center/right from face box x-center.
+                    # We don't have frame width here, so use a tertile split
+                    # on the x-coordinate alone (works well for 640+ px frames).
+                    x_center = p.box[0] + p.box[2] / 2.0
+                    if x_center < 213:
+                        pos_hint = " (on the left)"
+                    elif x_center < 427:
+                        pos_hint = " (in the center)"
+                    else:
+                        pos_hint = " (on the right)"
+                parts.append(f"Person: {label}{pos_hint}")
         else:
             parts.append("no people detected")
-        # extra bodies with no face (already folded into visitor_count) - note them
-        # so the model knows some 'people' may be turned away / faceless.
         if ev.extra_unknown and ev.extra_unknown > 0 and faces < total:
-            parts.append(f"{ev.extra_unknown} of them have no clearly visible face")
+            parts.append(f"{ev.extra_unknown} additional people have no clearly visible face")
         objs = list(ev.carried_objects or [])
         if objs:
-            parts.append("objects being carried: " + ", ".join(objs))
+            parts.append("objects detected: " + ", ".join(objs))
         return "; ".join(parts)
 
     def _apply_vlm_result(self, ev: VisitorEvent, result) -> dict:
         """Fold one VLM result onto the event and return the changed DB fields.
 
-        Sets the EVENT-LEVEL scene_summary / appearance (the primary person's
-        cautious line, back-compat) / ocr_text, AND distributes the per-person
-        `people` descriptions to the UNKNOWN Person entries in order (clothing +
-        carried -> Person.appearance, mood -> Person.expression). Returns a dict of
-        changed event-level fields (including the re-serialised `people` when any
-        person description changed) so the async path can persist just the delta.
-        Used by BOTH the inline and the background-enrich VLM paths so they stay
-        in lockstep. Fully defensive: missing keys degrade to "" / [].
+        Sets the EVENT-LEVEL scene_summary / appearance / ocr_text / hazards,
+        AND distributes the per-person descriptions (clothing, action, position,
+        appearance, carrying) to the Person entries in order. Returns a dict of
+        changed event-level fields so the async path can persist just the delta.
         """
         if not result:
             return {}
@@ -496,56 +510,67 @@ class Pipeline:
         appearance = (result.get("appearance", "") or "").strip()
         ocr = ((result.get("ocr_text", "") or "").strip()
                if self.ocr_enabled else "")
+        hazards    = (result.get("hazards",  "") or "").strip()
+        objects_txt= (result.get("objects",  "") or "").strip()
         vlm_people = result.get("people") or []
 
-        # Distribute per-person descriptions to EVERY person (known + unknown),
-        # ordered left-to-right so they line up with the VLM's stated left-to-right
-        # people[] ordering (Phase 16 - known people get a clothing/mood line too).
-        #
-        # ALIGNMENT SAFETY (Phase 16 fix): the VLM's people[] and our detected
-        # faces can disagree in length/order - the VLM counts faceless bodies that
-        # never appear in ev.people, and its "left to right" need not match the
-        # face-box order. A blind zip() then filled face #1's clothing from the
-        # VLM's description of a DIFFERENT person. We now attribute per-person ONLY
-        # when the counts line up exactly; otherwise we keep the trustworthy
-        # event-level scene/appearance below and leave per-person to face-only data
-        # rather than risk a wrong-person description. Grounding the prompt with the
-        # true count (see _vlm_facts) makes the exact-match case the common one.
+        # Prepend any hazard to the scene_summary so it's always spoken first.
+        if hazards and not scene.lower().startswith(hazards[:20].lower()):
+            scene = hazards.rstrip(".") + ". " + scene if scene else hazards
+
+        # Distribute per-person descriptions to every person (known + unknown),
+        # ordered left-to-right. Now includes clothing, action, position.
         ordered_people = sorted(ev.people, key=lambda p: p.box[0])
         changed_people = False
         if vlm_people and len(vlm_people) == len(ordered_people):
             for p, d in zip(ordered_people, vlm_people):
-                appear = (d.get("appearance", "") or "").strip()
-                carrying = (d.get("carrying", "") or "").strip()
-                expr = (d.get("expression", "") or "").strip()
+                appear   = (d.get("appearance", "") or "").strip()
+                clothing = (d.get("clothing",   "") or "").strip()
+                carrying = (d.get("carrying",   "") or "").strip()
+                action   = (d.get("action",     "") or "").strip()
+                position = (d.get("position",   "") or "").strip()
+                expr     = (d.get("expression", "") or "").strip()
+                # Build a rich combined appearance string for legacy fields.
                 bits = []
-                if appear:
-                    bits.append(appear)
-                if carrying:
-                    bits.append(f"carrying {carrying}")
+                if clothing: bits.append(clothing)
+                if appear:   bits.append(appear)
+                if carrying: bits.append(f"carrying {carrying}")
+                if action:   bits.append(action)
                 new_appearance = ", ".join(bits)
-                if new_appearance != p.appearance or expr != p.expression:
+                if (new_appearance != p.appearance or expr != p.expression
+                        or position != p.position or clothing != p.clothing):
                     changed_people = True
                 p.appearance = new_appearance
                 p.expression = expr
+                # New spatial fields
+                p.position = position
+                p.clothing = clothing
+                p.action   = action
+                p.carrying = carrying
         elif vlm_people and len(ordered_people) == 1:
-            # One face but the VLM split the scene into several entries: attribute
-            # the most prominent (first) description to our single person.
             d = vlm_people[0]
             p = ordered_people[0]
-            appear = (d.get("appearance", "") or "").strip()
-            carrying = (d.get("carrying", "") or "").strip()
-            expr = (d.get("expression", "") or "").strip()
+            appear   = (d.get("appearance", "") or "").strip()
+            clothing = (d.get("clothing",   "") or "").strip()
+            carrying = (d.get("carrying",   "") or "").strip()
+            action   = (d.get("action",     "") or "").strip()
+            position = (d.get("position",   "") or "").strip()
+            expr     = (d.get("expression", "") or "").strip()
             bits = []
-            if appear:
-                bits.append(appear)
-            if carrying:
-                bits.append(f"carrying {carrying}")
+            if clothing: bits.append(clothing)
+            if appear:   bits.append(appear)
+            if carrying: bits.append(f"carrying {carrying}")
+            if action:   bits.append(action)
             new_appearance = ", ".join(bits)
-            if new_appearance != p.appearance or expr != p.expression:
+            if (new_appearance != p.appearance or expr != p.expression
+                    or position != p.position or clothing != p.clothing):
                 changed_people = True
             p.appearance = new_appearance
             p.expression = expr
+            p.position = position
+            p.clothing = clothing
+            p.action   = action
+            p.carrying = carrying
 
         fields: dict = {}
         if scene:
@@ -581,6 +606,7 @@ class Pipeline:
 
         def worker():
             try:
+                self._last_vlm_time = _time.monotonic()
                 result = self.vlm.describe_and_read(frame_bgr, facts=facts)
             except Exception as e:                        # pragma: no cover
                 print(f"[Pipeline] Async VLM enrich failed for {event_id}: {e}")

@@ -111,9 +111,7 @@ class _NavShellState extends ConsumerState<NavShell> with WidgetsBindingObserver
   Future<void> _onEnriched(VisitorEvent ev) async {
     if (ev.eventId.isEmpty || ev.eventId == _lastEnrichedId) return;
     final description = [
-      ev.announcementText.trim().isNotEmpty
-          ? ev.announcementText.trim()
-          : ev.sceneSummary.trim(),
+      ev.sceneSummary.trim(),
       if (ev.ocrText.trim().isNotEmpty) 'Visible text: ${ev.ocrText.trim()}',
     ].where((s) => s.isNotEmpty).join(' ');
     if (description.isEmpty) return;

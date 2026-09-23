@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:isolate';
+import 'dart:ui';
 
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
@@ -13,9 +15,10 @@ import 'notification_service.dart';
 /// indefinitely, and it is honest about it -- Android forces a persistent
 /// notification the user can see and stop.
 ///
-/// WHY no Firebase: the household chose LAN-only. Nothing leaves the local
-/// network, there is no push account to configure, and it works with the
-/// internet down. The cost is that the phone must be on the same Wi-Fi.
+/// WHY microphone type: Android 14+ requires the foreground service type to
+/// declare "microphone" if it touches the mic at all. Without it, wake word
+/// recording silently fails with a SecurityException. We declare both
+/// dataSync (for the WebSocket) and microphone (for "Hey Access").
 ///
 /// This wrapper deliberately does NOT run the socket in the service's isolate.
 /// The isolate would need its own copy of the API config, auth token, TTS and
@@ -27,6 +30,9 @@ class BackgroundAlertService {
   BackgroundAlertService();
 
   bool _initialised = false;
+
+  /// Port name used to signal the main isolate from the service worker.
+  static const String _portName = 'accessai_bg_port';
 
   /// Whether the service is currently running (best-effort; false on non-Android).
   Future<bool> get isRunning async {
@@ -66,10 +72,14 @@ class BackgroundAlertService {
 
   /// Start holding the connection open. Returns whether the service is running
   /// afterwards. Safe to call repeatedly.
-  Future<bool> start() async {
+  Future<bool> start({bool wakeWordActive = false}) async {
     try {
       _initOnce();
-      if (await FlutterForegroundTask.isRunningService) return true;
+      if (await FlutterForegroundTask.isRunningService) {
+        // Already running — update the notification text if wake word changed.
+        await _updateNotification(wakeWordActive: wakeWordActive);
+        return true;
+      }
       // Battery-optimisation exemption keeps the socket alive on aggressive
       // OEM skins (MIUI in particular kills unexempted services). Asking is
       // best-effort: declining still leaves a working service, just one the
@@ -80,7 +90,9 @@ class BackgroundAlertService {
       final result = await FlutterForegroundTask.startService(
         serviceId: 512,
         notificationTitle: 'AccessAI is listening',
-        notificationText: 'You will be alerted when someone is at the door.',
+        notificationText: wakeWordActive
+            ? 'Say "Hey Access" to ask a question hands-free.'
+            : 'You will be alerted when someone is at the door.',
         callback: _startCallback,
       );
       if (result is ServiceRequestSuccess) return true;
@@ -90,10 +102,35 @@ class BackgroundAlertService {
     }
   }
 
+  /// Update the persistent notification text to reflect whether wake word is on.
+  Future<void> updateWakeWordState({required bool active}) async {
+    try {
+      if (!await FlutterForegroundTask.isRunningService) return;
+      await _updateNotification(wakeWordActive: active);
+    } catch (_) {}
+  }
+
+  Future<void> _updateNotification({required bool wakeWordActive}) async {
+    await FlutterForegroundTask.updateService(
+      notificationTitle: 'AccessAI is listening',
+      notificationText: wakeWordActive
+          ? 'Say "Hey Access" to ask a question hands-free.'
+          : 'You will be alerted when someone is at the door.',
+    );
+  }
+
   Future<void> stop() async {
     try {
       await FlutterForegroundTask.stopService();
     } catch (_) {}
+  }
+
+  /// Register a port so the service worker can send messages to the main
+  /// isolate. Call this once in main() before runApp().
+  static void initCommunicationPort(void Function(dynamic) onMessage) {
+    final port = ReceivePort();
+    IsolateNameServer.registerPortWithName(port.sendPort, _portName);
+    port.listen(onMessage);
   }
 }
 
@@ -106,13 +143,32 @@ void _startCallback() {
 /// Minimal handler: its only job is to exist so Android keeps the process
 /// warm. The real work (WebSocket, notifications, speech) stays in the main
 /// isolate -- see the class doc above for why.
+///
+/// On each repeat event (every 60 s) it pings the main isolate so the wake
+/// word watchdog can verify the loop is still alive and restart if needed.
 class _KeepAliveHandler extends TaskHandler {
-  @override
-  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {}
+  static const String _portName = 'accessai_bg_port';
 
   @override
-  void onRepeatEvent(DateTime timestamp) {}
+  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
+    // Signal the main isolate that the service started so it can start/verify
+    // the wake word loop.
+    _ping('started');
+  }
 
   @override
-  Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {}
+  void onRepeatEvent(DateTime timestamp) {
+    // Heartbeat: lets the main isolate know the service is still alive.
+    _ping('heartbeat');
+  }
+
+  @override
+  Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {
+    _ping('stopped');
+  }
+
+  void _ping(String msg) {
+    final send = IsolateNameServer.lookupPortByName(_portName);
+    send?.send(msg);
+  }
 }

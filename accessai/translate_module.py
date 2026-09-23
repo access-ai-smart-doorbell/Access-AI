@@ -12,8 +12,9 @@ Backends (priority, all behind the same interface):
   A "github"  - PREFERRED, torch-safe. Reuses the Phase-6 VLMModule's
                 OpenAI-compatible chat endpoint + multi-key FAILOVER for a
                 text-only translation call. No new dependency, never moves torch.
-  B "local"   - an offline MT model (e.g. NLLB / IndicTrans2). HEAVY and risks
-                pulling torch; lazy-loaded and only used if explicitly selected.
+  B "groq"    - Groq cloud LLM (free tier, fast). Uses the OpenAI-compatible
+                Groq API for text-only translation. Torch-free, adds no heavy
+                dependency. Set GROQ_API_KEY in .env.
   C "none"    - passthrough: translate() returns the original text unchanged.
 
 Design rules (same as every AccessAI module):
@@ -24,6 +25,15 @@ Design rules (same as every AccessAI module):
   * translate() ALWAYS returns a string.
 """
 
+import logging
+
+logger = logging.getLogger("TranslateModule")
+
+try:
+    import requests as _requests
+    _HAS_REQUESTS = True
+except ImportError:
+    _HAS_REQUESTS = False
 
 # A small, sensible default so the module is usable standalone (run.py passes the
 # full config.LANGUAGE_NAMES in). Maps ISO code -> human name for the prompt.
@@ -33,27 +43,37 @@ _DEFAULT_LANGUAGE_NAMES = {
     "gu": "Gujarati", "pa": "Punjabi", "ur": "Urdu",
 }
 
+# Groq API defaults.
+_GROQ_BASE_URL = "https://api.groq.com/openai/v1/chat/completions"
+_GROQ_MODEL = "llama-3.1-8b-instant"
+
 
 class TranslateModule:
     def __init__(self, backend="github", user_language="en",
-                 language_names=None, vlm=None):
+                 language_names=None, vlm=None, groq_keys=""):
         self.backend = (backend or "none").lower()
         self.user_language = (user_language or "en").strip() or "en"
         self.language_names = dict(language_names or _DEFAULT_LANGUAGE_NAMES)
         self.vlm = vlm                      # Phase-6 VLMModule (reused for "github")
-        self._local = None                  # lazy-loaded MT model for "local"
-        self._local_failed = False
+
+        # Groq backend keys (comma-separated string or list).
+        if isinstance(groq_keys, str):
+            groq_keys = groq_keys.split(",")
+        self._groq_keys = [k.strip() for k in (groq_keys or []) if k and k.strip()]
+        self._groq_last_good = 0
 
         if self.backend == "github":
             ok = bool(vlm is not None and vlm.available())
-            why = "reusing Phase-6 GitHub Models keys" if ok else (
+            why = "reusing VLM keys" if ok else (
                 "no VLM keys available - PASSTHROUGH (shows original)")
             print(f"[TranslateModule] backend=github, target="
                   f"{self.lang_name(self.user_language)} | {why}")
-        elif self.backend == "local":
-            print(f"[TranslateModule] backend=local (offline MT), target="
-                  f"{self.lang_name(self.user_language)} | model lazy-loads on "
-                  f"first use (torch-safety rules apply)")
+        elif self.backend == "groq":
+            ok = bool(self._groq_keys and _HAS_REQUESTS)
+            why = (f"{len(self._groq_keys)} key(s)" if ok else
+                   "no Groq keys or requests missing - PASSTHROUGH")
+            print(f"[TranslateModule] backend=groq, target="
+                  f"{self.lang_name(self.user_language)} | {why}")
         else:
             self.backend = "none"
             print(f"[TranslateModule] backend=none | PASSTHROUGH: translation "
@@ -66,8 +86,8 @@ class TranslateModule:
         original) - lets the UI say 'showing original'."""
         if self.backend == "github":
             return bool(self.vlm is not None and self.vlm.available())
-        if self.backend == "local":
-            return not self._local_failed and self._ensure_local()
+        if self.backend == "groq":
+            return bool(self._groq_keys and _HAS_REQUESTS)
         return False
 
     def backend_name(self) -> str:
@@ -115,40 +135,61 @@ class TranslateModule:
                 if self.vlm is not None and self.vlm.available():
                     out = self.vlm.translate_text(text, self.lang_name(target))
                 return out.strip() if out and out.strip() else text
-            if self.backend == "local":
-                return self._translate_local(text, src, target) or text
+            if self.backend == "groq":
+                return self._translate_groq(text, src, target) or text
             # backend "none" -> passthrough
             return text
         except Exception as e:                                # pragma: no cover
-            print(f"[TranslateModule] translate failed ({e}); using original.")
+            logger.warning("translate failed (%s); using original.", e)
             return text
 
-    # ------------------------------------------------------- local MT (Option B)
-    def _ensure_local(self) -> bool:
-        """Lazy-load an offline MT model. Returns True if usable. Kept minimal and
-        OFF by default because it risks moving torch (see the torch-safety rules).
-        """
-        if self._local is not None:
-            return True
-        if self._local_failed:
-            return False
-        try:
-            # Intentionally not imported at module top so selecting "github"/"none"
-            # never drags transformers/torch into the process.
-            from transformers import pipeline as hf_pipeline  # noqa: F401
-            # A concrete model would be wired here (e.g. NLLB-200-distilled-600M).
-            # Left unloaded by default to honour the torch-safety guardrail; flip
-            # to a real load only after pinning torch and re-checking YOLO.
-            self._local_failed = True
-            print("[TranslateModule] local backend selected but no offline model "
-                  "is wired (torch-safety); PASSTHROUGH until one is configured.")
-            return False
-        except Exception as e:
-            self._local_failed = True
-            print(f"[TranslateModule] local MT unavailable ({e}); PASSTHROUGH.")
-            return False
+    # ------------------------------------------------------- Groq API (Option B)
+    def _translate_groq(self, text, src, target) -> str:
+        """Translate via Groq's OpenAI-compatible chat API.
 
-    def _translate_local(self, text, src, target) -> str:
-        if not self._ensure_local():
+        Tries each key in round-robin order. Returns the translated text, or ''
+        on any failure (caller falls back to original). Torch-free, fast, free tier.
+        """
+        if not self._groq_keys or not _HAS_REQUESTS:
             return ""
-        return ""   # pragma: no cover - real model call would go here
+
+        target_name = self.lang_name(target)
+        src_hint = f" from {self.lang_name(src)}" if src else ""
+        prompt = (
+            f"Translate the following text{src_hint} into {target_name}. "
+            f"Return ONLY the translated text, nothing else.\n\n{text}"
+        )
+
+        n = len(self._groq_keys)
+        order = [(self._groq_last_good + i) % n for i in range(n)]
+
+        for k_idx in order:
+            key = self._groq_keys[k_idx]
+            masked = f"...{key[-4:]}" if len(key) >= 4 else "****"
+            try:
+                r = _requests.post(
+                    _GROQ_BASE_URL,
+                    headers={"Authorization": f"Bearer {key}",
+                             "Content-Type": "application/json"},
+                    json={
+                        "model": _GROQ_MODEL,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "max_tokens": 500,
+                        "temperature": 0.1,
+                    },
+                    timeout=15,
+                )
+                if r.status_code == 200:
+                    content = r.json()["choices"][0]["message"]["content"]
+                    self._groq_last_good = k_idx
+                    return content.strip()
+                if r.status_code == 429:
+                    logger.info("Groq key %s: HTTP 429, trying next.", masked)
+                    continue
+                logger.warning("Groq key %s: HTTP %d, trying next.",
+                               masked, r.status_code)
+            except Exception as e:
+                logger.warning("Groq key %s: error (%s), trying next.", masked, e)
+
+        logger.warning("All Groq keys exhausted; returning original.")
+        return ""

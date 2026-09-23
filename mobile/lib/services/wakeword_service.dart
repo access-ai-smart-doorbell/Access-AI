@@ -55,6 +55,7 @@ class WakeWordService {
 
   bool _ready = false;
   bool _enabled = false; // user intent (should we be listening at all)
+  bool _paused = false;  // temporarily quiet (VoiceScreen has the mic)
   bool _running = false; // a listen session is currently live
   bool _awaitingCommand = false; // wake heard, capturing the follow-up question
   int _errorStreak = 0; // consecutive engine errors -> forces a re-initialize
@@ -127,8 +128,8 @@ class WakeWordService {
     // Safety net: if both status + error callbacks are ever missed (engine
     // hang), the watchdog restarts the listen session so the loop can't die.
     _watchdog?.cancel();
-    _watchdog = Timer.periodic(const Duration(seconds: 12), (_) {
-      if (_enabled && !_running) _listenOnce();
+    _watchdog = Timer.periodic(const Duration(seconds: 6), (_) {
+      if (_enabled && !_paused && !_running) _listenOnce();
     });
     _listenOnce();
   }
@@ -136,6 +137,7 @@ class WakeWordService {
   /// Turn the listener off and cancel any pending re-arm.
   Future<void> stop() async {
     _enabled = false;
+    _paused = false;
     _awaitingCommand = false;
     _watchdog?.cancel();
     _watchdog = null;
@@ -146,6 +148,28 @@ class WakeWordService {
     } catch (_) {}
     _running = false;
     onListeningChanged?.call(false);
+  }
+
+  /// Temporarily pause listening without clearing [_enabled]. Used by
+  /// VoiceScreen so its own STT session doesn't compete with the wake word
+  /// loop — Android only allows one STT recognizer at a time.
+  Future<void> pause() async {
+    if (!_enabled || _paused) return;
+    _paused = true;
+    _rearm?.cancel();
+    _rearm = null;
+    try {
+      await _speech.stop();
+    } catch (_) {}
+    _running = false;
+    onListeningChanged?.call(false);
+  }
+
+  /// Resume after a [pause]. No-op if not paused or not enabled.
+  void resume() {
+    if (!_enabled || !_paused) return;
+    _paused = false;
+    _scheduleRearm(const Duration(milliseconds: 300));
   }
 
   void _onStatus(String status) {
@@ -185,7 +209,7 @@ class WakeWordService {
   bool _wokeThisSession = false;
 
   Future<void> _listenOnce() async {
-    if (!_enabled || _running || !_ready) return;
+    if (!_enabled || _paused || _running || !_ready) return;
     _running = true;
     _lastPartial = '';
     _wokeThisSession = false;

@@ -38,15 +38,23 @@ Routes:
 """
 
 import asyncio
+import collections
 import hashlib
 import hmac as _hmac
 import json
+import logging
 import os
+import pathlib
 import secrets as _secrets
 import threading
 import time
 
 import cv2
+
+logger = logging.getLogger("accessai.server")
+
+# Maximum allowed upload size for file endpoints (10 MB).
+_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 import numpy as np
 from fastapi import (FastAPI, WebSocket, WebSocketDisconnect, HTTPException,
                      Body, UploadFile, File, Form, Request)
@@ -80,28 +88,34 @@ class _TokenBucket:
     Each expensive call (full pipeline run, possibly a paid cloud VLM request)
     consumes one token; the bucket refills at per_min/60 tokens per second up
     to `burst`. A drained bucket -> 429 with a clean JSON body.
+
+    Uses OrderedDict for O(1) eviction instead of sorting the entire dict.
     """
 
     def __init__(self, per_min: float, burst: int):
         self.rate = max(0.01, float(per_min)) / 60.0
         self.burst = max(1, int(burst))
         self._lock = threading.Lock()
-        self._state = {}          # ip -> (tokens, last_ts)
+        self._state: collections.OrderedDict = collections.OrderedDict()
 
     def allow(self, ip: str) -> bool:
         now = time.monotonic()
         with self._lock:
-            tokens, last = self._state.get(ip, (float(self.burst), now))
-            tokens = min(self.burst, tokens + (now - last) * self.rate)
+            entry = self._state.get(ip)
+            if entry is not None:
+                tokens, last = entry
+                tokens = min(self.burst, tokens + (now - last) * self.rate)
+            else:
+                tokens = float(self.burst)
             if tokens < 1.0:
                 self._state[ip] = (tokens, now)
+                self._state.move_to_end(ip)
                 return False
             self._state[ip] = (tokens - 1.0, now)
-            # Bound the table so a spoofed-IP flood can't grow it unboundedly.
-            if len(self._state) > 1000:
-                oldest = sorted(self._state.items(), key=lambda kv: kv[1][1])
-                for k, _v in oldest[:500]:
-                    self._state.pop(k, None)
+            self._state.move_to_end(ip)
+            # Bound the table: evict oldest entries in O(1) per pop.
+            while len(self._state) > 1000:
+                self._state.popitem(last=False)
             return True
 
 
@@ -421,8 +435,8 @@ def make_app(*, pipeline, latest: LatestFrame, db, web_dir: str,
                 loop.run_in_executor(None, _push_send_all, payload["event"])
                 loop.run_in_executor(None, _webhook_send, payload["event"])
                 _maybe_auto_greet(payload["event"])
-            except Exception:                             # pragma: no cover
-                pass
+            except Exception as e:                        # pragma: no cover
+                logger.debug("Push/webhook fire-and-forget error: %s", e)
         async with clients_lock:
             dead = []
             for ws in clients:
@@ -647,6 +661,10 @@ def make_app(*, pipeline, latest: LatestFrame, db, web_dir: str,
         images = []
         for uf in files:
             data = await uf.read()
+            if len(data) > _MAX_UPLOAD_BYTES:
+                raise HTTPException(
+                    413, f"File too large ({len(data)} bytes). "
+                         f"Max allowed: {_MAX_UPLOAD_BYTES // (1024*1024)} MB.")
             img = None
             if data:
                 try:
@@ -737,6 +755,10 @@ def make_app(*, pipeline, latest: LatestFrame, db, web_dir: str,
         data = await file.read()
         if not data:
             raise HTTPException(400, "empty upload")
+        if len(data) > _MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                413, f"File too large ({len(data)} bytes). "
+                     f"Max allowed: {_MAX_UPLOAD_BYTES // (1024*1024)} MB.")
         loop = asyncio.get_event_loop()
         text, lang = await loop.run_in_executor(
             None, lambda: speech.transcribe_wav(data))
@@ -1017,6 +1039,17 @@ def make_app(*, pipeline, latest: LatestFrame, db, web_dir: str,
         question = (payload.get("question") or payload.get("text") or "").strip()
         if not question:
             raise HTTPException(400, "question is required")
+        # Prompt injection protection: length limit + strip control chars.
+        if len(question) > 500:
+            raise HTTPException(
+                400, "Question too long (max 500 characters).")
+        # Strip known injection prefixes.
+        _lower = question.lower()
+        for prefix in ("ignore previous", "ignore all", "system:",
+                       "you are now", "forget your", "disregard"):
+            if _lower.startswith(prefix):
+                raise HTTPException(
+                    400, "Invalid question format.")
         vlm = getattr(pipeline, "vlm", None)
         vlm_on = bool(getattr(pipeline, "vlm_enabled", False))
         if vlm is None or not vlm_on or not vlm.available():
@@ -1147,6 +1180,9 @@ def make_app(*, pipeline, latest: LatestFrame, db, web_dir: str,
         wav_bytes = None
         if file is not None:
             wav_bytes = await file.read()
+            if wav_bytes and len(wav_bytes) > _MAX_UPLOAD_BYTES:
+                raise HTTPException(
+                    413, f"File too large. Max: {_MAX_UPLOAD_BYTES // (1024*1024)} MB.")
             if not wav_bytes:
                 wav_bytes = None
         loop = asyncio.get_event_loop()
@@ -1300,6 +1336,115 @@ def make_app(*, pipeline, latest: LatestFrame, db, web_dir: str,
             raise HTTPException(400, "a non-empty 'token' is required")
         removed = db.push_unregister(token)
         return {"ok": True, "removed": bool(removed)}
+
+    @app.get("/push_status")
+    def push_status():
+        """Diagnostic endpoint: why push notifications work (or don't)."""
+        creds = str(getattr(cfg, "FCM_CREDENTIALS_JSON", "") or "")
+        project = str(getattr(cfg, "FCM_PROJECT_ID", "") or "")
+        tokens = []
+        try:
+            tokens = db.push_tokens()
+        except Exception:
+            pass
+        return {
+            "enabled": push_enabled,
+            "credentials_set": bool(creds and project),
+            "registered_count": len(tokens),
+            "delivery_possible": bool(push_enabled and creds and project),
+            "hint": (
+                "Working — push delivery is active." if (push_enabled and creds and project) else
+                "Set ENABLE_PUSH=True in config.py" if not push_enabled else
+                "Set FCM_PROJECT_ID and FCM_CREDENTIALS_JSON in .env" if not (creds and project) else
+                "Ready to deliver."
+            ),
+        }
+
+    # --- Phase 18: video clip endpoints --------------------------------------
+    @app.get("/clips")
+    def clips_list():
+        """List saved video clips with metadata."""
+        recorder = getattr(app.state, "recorder", None)
+        clips_dir = getattr(recorder, "_clips_dir", None) if recorder else None
+        if clips_dir is None:
+            clips_dir = pathlib.Path(getattr(cfg, "VIDEO_CLIPS_DIR", "data/clips"))
+        if not clips_dir.is_dir():
+            return {"clips": [], "count": 0}
+        result = []
+        for mp4 in sorted(clips_dir.glob("event_*.mp4"),
+                          key=lambda p: p.stat().st_mtime, reverse=True):
+            meta_path = mp4.with_suffix(".json")
+            meta = {}
+            if meta_path.exists():
+                try:
+                    meta = json.loads(meta_path.read_text())
+                except Exception:
+                    pass
+            result.append({
+                "filename": mp4.name,
+                "size_bytes": mp4.stat().st_size,
+                "modified": mp4.stat().st_mtime,
+                **meta,
+            })
+        return {"clips": result, "count": len(result)}
+
+    @app.get("/clips/{filename}")
+    def clips_download(filename: str):
+        """Stream/download a saved video clip."""
+        if not filename.startswith("event_") or not filename.endswith(".mp4"):
+            raise HTTPException(400, "invalid clip filename")
+        if ".." in filename or "/" in filename or "\\" in filename:
+            raise HTTPException(400, "invalid clip filename")
+        recorder = getattr(app.state, "recorder", None)
+        clips_dir = getattr(recorder, "_clips_dir", None) if recorder else None
+        if clips_dir is None:
+            clips_dir = pathlib.Path(getattr(cfg, "VIDEO_CLIPS_DIR", "data/clips"))
+        path = clips_dir / filename
+        if not path.exists():
+            raise HTTPException(404, "clip not found")
+        return FileResponse(str(path), media_type="video/mp4",
+                            filename=filename)
+
+    @app.delete("/clips/{filename}")
+    def clips_delete(filename: str):
+        """Delete a saved video clip and its metadata."""
+        if not filename.startswith("event_") or not filename.endswith(".mp4"):
+            raise HTTPException(400, "invalid clip filename")
+        if ".." in filename or "/" in filename or "\\" in filename:
+            raise HTTPException(400, "invalid clip filename")
+        recorder = getattr(app.state, "recorder", None)
+        clips_dir = getattr(recorder, "_clips_dir", None) if recorder else None
+        if clips_dir is None:
+            clips_dir = pathlib.Path(getattr(cfg, "VIDEO_CLIPS_DIR", "data/clips"))
+        path = clips_dir / filename
+        if not path.exists():
+            raise HTTPException(404, "clip not found")
+        path.unlink(missing_ok=True)
+        path.with_suffix(".json").unlink(missing_ok=True)
+        return {"deleted": filename}
+
+    @app.get("/clips_status")
+    def clips_status():
+        """Video clip recorder status."""
+        recorder = getattr(app.state, "recorder", None)
+        enabled = recorder is not None
+        clips_dir = getattr(recorder, "_clips_dir", None) if recorder else None
+        if clips_dir is None:
+            clips_dir = pathlib.Path(getattr(cfg, "VIDEO_CLIPS_DIR", "data/clips"))
+        count = 0
+        total_bytes = 0
+        if clips_dir.is_dir():
+            for f in clips_dir.glob("event_*.mp4"):
+                count += 1
+                total_bytes += f.stat().st_size
+        return {
+            "enabled": enabled,
+            "clips_count": count,
+            "total_size_mb": round(total_bytes / (1024 * 1024), 1),
+            "clips_dir": str(clips_dir),
+            "retain_days": getattr(cfg, "VIDEO_RETAIN_DAYS", 7),
+            "max_clips": getattr(cfg, "VIDEO_MAX_CLIPS", 500),
+        }
 
     # --- Phase 10: hardware doorbell webhook (ESP32-CAM readiness) -----------
     @app.post("/ring")

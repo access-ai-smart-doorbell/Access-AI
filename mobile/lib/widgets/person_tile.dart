@@ -99,6 +99,9 @@ class PersonTile extends StatelessWidget {
     }
 
     if (p.appearance.trim().isNotEmpty) lines.add(_cap(p.appearance.trim()));
+    if (p.clothing.trim().isNotEmpty) lines.add(_cap(p.clothing.trim()));
+    if (p.action.trim().isNotEmpty) lines.add(_cap(p.action.trim()));
+    if (p.position.trim().isNotEmpty) lines.add(_cap(p.position.trim()));
 
     final expr = hedgedExpression(p.expression);
     if (expr.isNotEmpty) lines.add(_cap(expr));

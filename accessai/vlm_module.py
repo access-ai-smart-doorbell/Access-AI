@@ -26,6 +26,7 @@ Design rules honoured here (same as every AccessAI module):
 import base64
 import json
 import re
+import time
 
 try:
     import requests
@@ -42,67 +43,89 @@ except Exception as e:                                   # pragma: no cover
     print(f"[VLMModule] OpenCV not available, VLM disabled: {e}")
 
 
-# The single combined instruction. One call returns BOTH scene + labels as JSON
-# so we spend only ONE request against the rate-limited free tier per visitor.
+# ─────────────────────────────────────────────────────────────────────────────
+# VLM Prompts — AccessAI Structured Scene Description
 #
-# SEMANTIC REASONING (Bug-4 upgrade): the model is framed as "a blind person's
-# eyes" and told exactly WHICH observations matter at a front door — the
-# Who / Where / What-doing / What-carrying / How-interacting questions — so the
-# scene sentence carries real situational meaning ("appears to be a delivery:
-# holding a box with an Amazon label, wearing a courier uniform") instead of a
-# flat caption ("a person is standing outside"). The JSON SHAPE is unchanged so
-# the pipeline parser keeps working; only the content got smarter.
-_SYSTEM_PROMPT = (
-    "You are the eyes of a blind person, describing their doorbell camera. "
-    "Your job is to answer, from the image alone: who is there, where they are "
-    "standing, what they appear to be doing, what they are carrying, and how "
-    "they are interacting with the door. Report ONLY observable facts, in "
-    "cautious language ('appears to be', 'likely', 'unable to determine'). "
-    "HARD RULES: never state a person's identity, exact age, gender, or race — "
-    "at most a broad hedged impression (e.g. 'appears to be an adult'). Never "
-    "attribute emotions or intent as fact: say 'appears to be smiling', never "
-    "'is happy'; describe behaviour ('standing close to the camera', 'looking "
-    "around'), never judgements like 'suspicious' or 'criminal'. Never claim "
-    "certainty about anything you cannot clearly see."
-)
+# Design principle: a visually impaired user needs NAVIGATION-ORIENTED output,
+# not a photographic caption. Priority order:
+#   1. Immediate hazards / obstacles in the user's path
+#   2. Number of people and their positions (left / center / right / near / far)
+#   3. Identity (name if known, from on-device face recognition — never guessed)
+#   4. Actions and movement (walking toward, standing, holding, using phone…)
+#   5. Important objects being held or nearby
+#   6. Clothing and visible appearance
+#   7. Background / environment
+# ─────────────────────────────────────────────────────────────────────────────
+
+_SYSTEM_PROMPT = """\
+You are a visual scene understanding assistant for AccessAI, an assistive system
+designed to help visually impaired users understand their surroundings through
+a doorbell or front-door camera.
+
+Your description will be spoken aloud. Do NOT use bullet points, lists,
+markdown, tables, or technical terms. Write only natural spoken sentences.
+
+PRIORITY ORDER (most important first):
+1. Immediate hazards or obstacles directly in the user's path
+2. Number of people visible and their positions
+3. Identity — use the name provided in GROUND TRUTH if available; otherwise
+   say "an unknown person". NEVER invent or guess identity.
+4. Actions and movement (walking toward camera, standing, sitting, holding
+   something, using a phone, entering or leaving)
+5. Important carried objects (bag, backpack, parcel, phone, umbrella, etc.)
+6. Clothing — type and colour when clearly visible
+7. Visible appearance — hair, glasses, beard, hat, mask, etc.
+8. Important nearby objects (vehicles, furniture, stairs, signs, animals)
+9. Environment — indoor or outdoor, time of day if inferable
+
+SPATIAL LANGUAGE — always describe position:
+- Use: left / center / right / directly in front / slightly left or right
+- Use: near / about [N] meters away / far in the background
+- Use: approaching / moving away / standing still
+
+RULES:
+- Describe ONLY what is clearly visible. If something is unclear, omit it.
+- Do NOT hallucinate people, objects, or text you cannot see.
+- Do NOT call anyone dangerous, suspicious, or criminal. Unknown simply means
+  the face was not recognised by the system.
+- Do NOT state exact age, race, or gender as fact — use cautious language:
+  "appears to be an adult", "appears to be elderly", "short hair", etc.
+- Do NOT state emotions as fact: say "appears to be smiling", not "is happy".
+- If there are many people, prioritise those closest to the camera.
+- Keep the final description concise enough for comfortable voice output.
+"""
+
 _USER_PROMPT = (
-    "Look at this doorbell camera image as a blind resident's eyes. Describe "
-    "EACH visible person separately. Respond with STRICT JSON only, no "
-    "markdown, exactly this shape:\n"
-    '{"people": [ {'
-    '"appearance": "<brief, cautious phrase covering what is visible of: hair, '
-    "clothing type + main colours, any uniform/company branding, accessories "
-    "(cap, helmet, glasses, ID badge, mask), and broad age impression only if "
-    "clear (e.g. 'appears to be an adult'); e.g. 'short dark hair, red courier "
-    "uniform with a Zomato logo, wearing a helmet'>\", "
-    '"carrying": "<anything this person is carrying or holding — parcel, box, '
-    "envelope, food bag, tool, phone, clipboard, umbrella; empty string if "
-    'nothing>", '
-    '"expression": "<one cautious phrase for apparent expression, e.g. '
-    "'appears to be smiling', 'neutral'; empty string if the face is not "
-    'clearly visible>" } ], '
-    '"appearance": "<one short, cautious sentence describing the MOST prominent '
-    "person's visible clothing (type and colours), any uniform or company "
-    "branding, and anything they are carrying; use 'appears to be' / 'looks "
-    'like\'; empty string if no person is visible>", '
-    '"scene": "<2-3 short sentences for a blind listener, in this order of '
-    "importance: (1) what the person appears to be DOING and their likely "
-    "purpose WITH the visible reason — e.g. 'Appears to be a delivery: holding "
-    "a box with a shipping label and wearing a courier uniform' — (2) WHERE "
-    "they are: near the door or far, facing the camera or turned away, at the "
-    "gate, on a vehicle; (3) anything else a blind resident should know: a "
-    "waiting vehicle, a second person further back, rain or darkness, an "
-    'object left at the door>", '
-    '"labels": "<any text visible on uniforms, clothing, boxes, vehicles, or '
-    "parcel/shipping labels, verbatim — courier and shop names (Amazon, "
-    'Flipkart, Swiggy, Zomato...) are especially important; empty if none>"}\n'
-    "Order the \"people\" array strictly LEFT TO RIGHT as the people appear in "
-    "the image, one object per person. Describe ONLY what is clearly visible: "
-    "if a detail is unclear, use an empty string instead of guessing. Do NOT "
-    "invent people, objects, vehicles, or brand names you cannot actually see "
-    "or read. Never state identity, exact age, race, or emotion as fact; stay "
-    "cautious; never say 'definitely'."
+    "Analyze this doorbell camera image. "
+    "Respond with STRICT JSON ONLY — no markdown, no explanation, no prose outside the JSON.\n\n"
+    "REQUIRED JSON SHAPE (fill ALL fields, use empty string if not visible):\n"
+    '{\n'
+    '  "people": [\n'
+    '    {\n'
+    '      "identity": "<name from GROUND TRUTH, or \'an unknown person\'>",\n'
+    '      "position": "<left | center | right | directly in front | far background>",\n'
+    '      "distance": "<estimated meters, e.g. \'about 1 meter\', or "">",\n'
+    '      "action": "<standing | walking toward camera | walking away | sitting | holding [object] | using phone | entering doorway | etc.>",\n'
+    '      "clothing": "<type + colour: e.g. \'blue T-shirt and black jeans\', or "">",\n'
+    '      "appearance": "<hair, glasses, beard, hat, mask — only what is clearly visible>",\n'
+    '      "carrying": "<bag, backpack, parcel, phone, umbrella, bottle — or "">",\n'
+    '      "expression": "<appears to be smiling | appears calm | etc., only if face clearly visible, or "">"\n'
+    '    }\n'
+    '  ],\n'
+    '  "hazards": "<stairs, vehicle blocking entry, wet floor, large obstacle — or "">",\n'
+    '  "objects": "<vehicles, furniture, signs, animals, bags near door with position — or "">",\n'
+    '  "scene": "<2-3 spoken sentences: number of people + what they are doing + any hazard + environment. Use names from GROUND TRUTH.>",\n'
+    '  "labels": "<any visible text on clothing, parcels, signs, vehicles — verbatim, or "">"\n'
+    '}\n\n'
+    "CRITICAL RULES:\n"
+    "- The \"people\" array MUST have ONE entry per visible person — NEVER leave it empty if people are visible.\n"
+    "- Order people LEFT TO RIGHT as they appear in the image.\n"
+    "- Use names ONLY from GROUND TRUTH — never guess identity.\n"
+    "- Describe ONLY what is clearly visible. Use empty string for anything unclear.\n"
+    "- NEVER call anyone suspicious, dangerous, or criminal.\n"
+    "- Do NOT state exact age or race as fact — use 'appears to be young adult', etc."
 )
+
 
 
 def _facts_preamble(facts: str) -> str:
@@ -126,38 +149,97 @@ def _facts_preamble(facts: str) -> str:
 class VLMModule:
     def __init__(self, keys, *, base_url, model="gpt-4o-mini", timeout=20,
                  max_tokens=300, temperature=0.2, jpeg_quality=80,
-                 max_image_width=768):
+                 max_image_width=768,
+                 extra_models=None,
+                 extra_providers=None):
+        """
+        Multi-model, multi-provider VLM with automatic failover.
+
+        Failover order:
+          1. Primary model (VLM_MODEL) with all keys
+          2. extra_models  — additional models on the SAME base_url/keys
+             (e.g. gemini-3.5-flash-lite, gemini-3.1-flash-lite)
+          3. extra_providers — list of {base_url, model, keys} dicts for
+             completely different API providers (OpenRouter, Together, etc.)
+
+        Each (key, model) pair has its own independent 429 back-off so a
+        quota hit on one model never blocks the others.
+        """
         # Accept a list OR a comma-separated string; strip blanks either way.
         if isinstance(keys, str):
             keys = keys.split(",")
         self._keys = [k.strip() for k in (keys or []) if k and k.strip()]
 
-        self.base_url = (base_url or "").rstrip("/")
-        self.model = model
-        self.timeout = float(timeout)
-        self.max_tokens = int(max_tokens)
-        self.temperature = float(temperature)
+        self.base_url     = (base_url or "").rstrip("/")
+        self.model        = model
+        self.timeout      = float(timeout)
+        self.max_tokens   = int(max_tokens)
+        self.temperature  = float(temperature)
         self.jpeg_quality = int(jpeg_quality)
         self.max_image_width = int(max_image_width)
 
-        # Failover bookkeeping (safe to expose via /vlm_status).
-        self._last_good = 0
-        self._last_error = ""
+        # Build the ordered list of (base_url, model, keys) providers.
+        # Primary model comes first, then extra_models on same base_url,
+        # then completely different providers.
+        self._providers = []
+        if self._keys and self.base_url:
+            self._providers.append({
+                "base_url": self.base_url,
+                "model":    self.model,
+                "keys":     self._keys,
+            })
+        # Extra models on same endpoint (quota spread across models).
+        for m in (extra_models or []):
+            m = (m or "").strip()
+            if m and m != self.model and self._keys and self.base_url:
+                self._providers.append({
+                    "base_url": self.base_url,
+                    "model":    m,
+                    "keys":     self._keys,
+                })
+        # Extra providers (different API endpoints entirely).
+        for ep in (extra_providers or []):
+            ep_url  = (ep.get("base_url") or "").rstrip("/")
+            ep_model= (ep.get("model")    or "").strip()
+            ep_keys = ep.get("keys") or []
+            if isinstance(ep_keys, str):
+                ep_keys = ep_keys.split(",")
+            ep_keys = [k.strip() for k in ep_keys if k and k.strip()]
+            if ep_url and ep_model and ep_keys:
+                self._providers.append({
+                    "base_url": ep_url,
+                    "model":    ep_model,
+                    "keys":     ep_keys,
+                })
+
+        # Per-(provider_idx, key_idx) 429 back-off map.
+        self._retry_after: dict[tuple, float] = {}
+        # Remember last successful (provider_idx, key_idx) so we start there.
+        self._last_good_provider = 0
+        self._last_good_key      = 0
+        self._last_error  = ""
         self._last_status = None
 
-        self._ready = bool(_HAS_REQUESTS and _HAS_CV2 and self._keys
-                           and self.base_url)
+        # Legacy single-key compat attributes (used by status() and tests).
+        self._last_good = 0
+        self._key_retry_after: dict[int, float] = {}
+
+        self._ready = bool(_HAS_REQUESTS and _HAS_CV2 and self._providers)
         if not self._ready:
             why = (
                 "no 'requests'" if not _HAS_REQUESTS else
-                "no OpenCV" if not _HAS_CV2 else
-                "no API keys (set GROQ_API_KEY or OPENAI_API_KEY in .env)" if not self._keys
-                else "no base_url"
+                "no OpenCV"     if not _HAS_CV2     else
+                "no API keys / base_url"
             )
             print(f"[VLMModule] Not ready ({why}); scene/OCR will be skipped "
                   f"(fail-soft, pipeline continues on YOLO-only).")
         else:
-            print(f"[VLMModule] Ready: model={self.model}, "
+            models_str = " → ".join(
+                f"{p['model']}({len(p['keys'])}k)" for p in self._providers
+            )
+            print(f"[VLMModule] Ready: {len(self._providers)} provider(s) | "
+                  f"failover: {models_str}")
+            print(f"[VLMModule] Primary: model={self.model}, "
                   f"{len(self._keys)} key(s) {self.masked_keys()}, "
                   f"base={self.base_url}")
 
@@ -166,22 +248,23 @@ class VLMModule:
         return self._ready
 
     def key_count(self) -> int:
-        return len(self._keys)
+        return sum(len(p["keys"]) for p in self._providers)
 
     def masked_keys(self):
-        """Last-4-only view of every key, for safe logging / status."""
+        """Last-4-only view of primary keys, for safe logging."""
         return [f"...{k[-4:]}" if len(k) >= 4 else "****" for k in self._keys]
 
     def status(self) -> dict:
         return {
-            "available": self._ready,
-            "model": self.model,
-            "base_url": self.base_url,
-            "key_count": self.key_count(),
-            "keys_masked": self.masked_keys(),
-            "last_good_index": self._last_good,
-            "last_status": self._last_status,
-            "last_error": self._last_error,
+            "available":        self._ready,
+            "model":            self.model,
+            "base_url":         self.base_url,
+            "provider_count":   len(self._providers),
+            "key_count":        self.key_count(),
+            "keys_masked":      self.masked_keys(),
+            "last_good_index":  self._last_good,
+            "last_status":      self._last_status,
+            "last_error":       self._last_error,
         }
 
     # ------------------------------------------------------------------ encode
@@ -237,73 +320,113 @@ class VLMModule:
                           timeout=max(self.timeout, 20))
 
     def _post(self, messages, max_tokens=None, timeout=None):
-        """POST a chat completion with the given `messages`, failing over across
-        keys. Works for BOTH vision (image content) and text-only payloads.
+        """POST a chat completion failing over across ALL providers and ALL keys.
 
-        `max_tokens` / `timeout` override the defaults (the Level-2 detailed
-        visitor report needs more room AND more time than the one-line scene
-        call - 500 tokens can take longer than the default 12s to generate).
+        Failover order:
+          provider 0 (primary model), all keys  →
+          provider 1 (first fallback model), all keys  →
+          … → last provider, all keys → None (YOLO-only)
 
-        Returns the assistant message text on success, or None if EVERY key
-        failed. Never raises. Rotates key order so we start from the last-good.
+        Each (provider_idx, key_idx) pair has its own 429 back-off so a
+        quota hit on model A doesn't block model B.
+        Returns the assistant message text on success, or None. Never raises.
         """
         if not self._ready or not messages:
             return None
 
         request_timeout = float(timeout or self.timeout)
-        body = {
-            "model": self.model,
-            "messages": messages,
-            "max_tokens": int(max_tokens or self.max_tokens),
-            "temperature": self.temperature,
-        }
-        url = f"{self.base_url}/chat/completions"
+        req_max_tokens  = int(max_tokens or self.max_tokens)
+        now = time.monotonic()
 
-        n = len(self._keys)
-        # Start at the last key that worked, then wrap around the rest.
-        order = [(self._last_good + i) % n for i in range(n)]
-        for idx in order:
-            key = self._keys[idx]
-            masked = f"...{key[-4:]}" if len(key) >= 4 else "****"
-            headers = {"Authorization": f"Bearer {key}",
-                       "Content-Type": "application/json"}
-            try:
-                r = requests.post(url, headers=headers, json=body,
-                                  timeout=request_timeout)
-            except Exception as e:                        # network / timeout
-                self._last_status = None
-                self._last_error = f"key {masked}: network error: {e}"
-                print(f"[VLMModule] key {masked} network error, failing over: {e}")
-                continue
+        for p_idx, provider in enumerate(self._providers):
+            p_base  = provider["base_url"]
+            p_model = provider["model"]
+            p_keys  = provider["keys"]
+            url     = f"{p_base}/chat/completions"
+            n       = len(p_keys)
 
-            self._last_status = r.status_code
-            if r.status_code == 200:
-                try:
-                    content = r.json()["choices"][0]["message"]["content"]
-                except Exception as e:                    # pragma: no cover
-                    self._last_error = f"key {masked}: bad response shape: {e}"
-                    print(f"[VLMModule] key {masked} returned an unexpected "
-                          f"body, failing over: {e}")
+            # Start from the last key that worked for this provider.
+            last_good = self._last_good_key if p_idx == self._last_good_provider else 0
+            order = [(last_good + i) % n for i in range(n)]
+
+            for k_idx in order:
+                pair = (p_idx, k_idx)
+                retry_at = self._retry_after.get(pair, 0.0)
+                if now < retry_at:
+                    remaining = int(retry_at - now)
+                    print(f"[VLMModule] {p_model} key#{k_idx} in 429 back-off, "
+                          f"{remaining}s remaining — skipping.")
                     continue
-                # Strip Qwen-style <think>...</think> reasoning blocks. Some
-                # models (e.g. qwen3.6) prepend internal chain-of-thought
-                # wrapped in these tags; leaving them in breaks JSON parsing
-                # and leaks raw reasoning into spoken announcements. Handle
-                # both closed tags and unclosed ones (truncated by max_tokens).
-                content = re.sub(r"<think>.*?</think>", "", content,
-                                 flags=re.DOTALL).strip()
-                # If <think> was opened but never closed (truncated), drop it.
-                if "<think>" in content:
-                    content = content.split("<think>")[0].strip()
-                self._last_good = idx           # remember the winner
-                self._last_error = ""
-                return content
 
-            # 429 rate-limit / 401 / 403 auth / 5xx -> try the next key.
-            self._last_error = f"key {masked}: HTTP {r.status_code}"
-            print(f"[VLMModule] key {masked} HTTP {r.status_code}, failing over.")
+                key    = p_keys[k_idx]
+                masked = f"...{key[-4:]}" if len(key) >= 4 else "****"
+                body   = {
+                    "model":       p_model,
+                    "messages":    messages,
+                    "max_tokens":  req_max_tokens,
+                    "temperature": self.temperature,
+                }
+                headers = {"Authorization": f"Bearer {key}",
+                           "Content-Type":  "application/json"}
+                try:
+                    r = requests.post(url, headers=headers, json=body,
+                                      timeout=request_timeout)
+                except Exception as e:
+                    self._last_status = None
+                    self._last_error  = f"{p_model}/{masked}: network error"
+                    print(f"[VLMModule] {p_model} key {masked} network error, "
+                          f"failing over: {e}")
+                    continue
 
-        print("[VLMModule] All keys failed; returning empty (YOLO-only fallback).")
+                self._last_status = r.status_code
+                if r.status_code == 200:
+                    try:
+                        content = r.json()["choices"][0]["message"]["content"]
+                    except Exception as e:
+                        self._last_error = f"{p_model}/{masked}: bad response"
+                        print(f"[VLMModule] {p_model} key {masked} bad response "
+                              f"shape, failing over: {e}")
+                        continue
+                    # Strip Qwen / thinking-model <think>…</think> blocks.
+                    content = re.sub(r"<think>.*?</think>", "", content,
+                                     flags=re.DOTALL).strip()
+                    if "<think>" in content:
+                        content = content.split("<think>")[0].strip()
+                    # Record winner.
+                    self._last_good_provider = p_idx
+                    self._last_good_key      = k_idx
+                    self._last_good          = k_idx  # legacy compat
+                    self._last_error         = ""
+                    self._retry_after.pop(pair, None)
+                    self._key_retry_after.pop(k_idx, None)  # legacy compat
+                    if p_model != self.model:
+                        print(f"[VLMModule] Failover succeeded on {p_model}.")
+                    return content
+
+                if r.status_code == 429:
+                    backoff = 60.0
+                    retry_hdr = r.headers.get("Retry-After", "")
+                    if retry_hdr.isdigit():
+                        backoff = max(backoff, float(retry_hdr))
+                    self._retry_after[pair] = time.monotonic() + backoff
+                    self._key_retry_after[k_idx] = time.monotonic() + backoff
+                    self._last_error = (f"{p_model}/{masked}: HTTP 429 "
+                                        f"(back-off {int(backoff)}s)")
+                    print(f"[VLMModule] {p_model} key {masked} HTTP 429 — "
+                          f"back-off {int(backoff)}s, trying next.")
+                elif r.status_code in (503, 529):
+                    # Server overloaded — short back-off then try next model.
+                    self._retry_after[pair] = time.monotonic() + 10.0
+                    self._last_error = f"{p_model}/{masked}: HTTP {r.status_code} overloaded"
+                    print(f"[VLMModule] {p_model} HTTP {r.status_code} (overloaded), "
+                          f"trying next model.")
+                    break  # skip remaining keys for this provider — try next
+                else:
+                    self._last_error = f"{p_model}/{masked}: HTTP {r.status_code}"
+                    print(f"[VLMModule] {p_model} key {masked} HTTP "
+                          f"{r.status_code}, failing over.")
+
+        print("[VLMModule] All providers/keys exhausted; YOLO-only fallback.")
         return None
 
     # --------------------------------------------------------------- high level
@@ -345,23 +468,30 @@ class VLMModule:
         if data_url is None:
             return ""
         system = (
-            "You are the eyes of a blind or deaf resident, answering their "
-            "question about what their doorbell camera sees RIGHT NOW. Answer "
-            "using ONLY what is actually visible in the image. Be brief (one "
-            "or two spoken-style sentences) and directly address the question "
-            "first, then add at most one closely-related visible detail if it "
-            "helps (e.g. asked about a parcel, mention the courier logo on it). "
-            "Stay cautious: 'appears to be' / 'likely' / 'unable to determine'. "
-            "Never state a person's identity, exact age, gender, or race; never "
-            "state emotion or intent as fact — 'appears to be smiling', never "
-            "'is happy'; never call anyone suspicious. If the answer is not "
-            "visible in the image, say plainly that you cannot tell, rather "
-            "than guessing."
+            "You are a visual assistant for AccessAI, an assistive system for "
+            "visually impaired users. The user has asked a question about what "
+            "the doorbell camera sees RIGHT NOW. Your answer will be spoken aloud."
+            "\n\n"
+            "Answer ONLY the question asked — do not give a full scene description "
+            "unless specifically requested. Be brief (1-3 spoken sentences) and "
+            "directly address the question first. If relevant, add one closely "
+            "related visible detail (e.g. asked about a parcel, mention the "
+            "courier logo).\n\n"
+            "SPATIAL LANGUAGE: always include position (left / center / right / "
+            "directly in front / near / far) and distance estimate when relevant.\n\n"
+            "RULES:\n"
+            "- Use only information actually visible in the image.\n"
+            "- Use cautious language: 'appears to be', 'likely', 'unable to tell'.\n"
+            "- Use identity names from GROUND TRUTH if provided; never guess identity.\n"
+            "- Do not state exact age, race, or gender as fact.\n"
+            "- Do not state emotions as fact ('appears to be smiling', not 'is happy').\n"
+            "- Never call anyone suspicious, dangerous, or criminal.\n"
+            "- If the answer is not visible, say clearly that you cannot tell."
         )
         hint = ""
         g = (grounding or "").strip()
         if g:
-            hint = ("Known facts from on-device detectors (do not contradict): "
+            hint = ("GROUND TRUTH from on-device detectors (do not contradict): "
                     f"{g}\n\n")
         messages = [
             {"role": "system", "content": system},
@@ -390,25 +520,37 @@ class VLMModule:
         if data_url is None:
             return ""
         system = (
-            "You are the eyes of a blind resident, giving a detailed spoken "
-            "report of their doorbell camera view. Write 4-7 short spoken-style "
-            "sentences (no lists, no headings, no markdown) covering, in this "
-            "order, whatever is actually visible: how many people and where "
-            "they are standing (close to the door / at the gate / far away, "
-            "facing the camera or turned away); what each appears to be doing; "
-            "what they are carrying; clothing and any uniform, logo or company "
-            "branding (courier names like Amazon, Flipkart, Swiggy, Zomato are "
-            "especially important); accessories such as a helmet, cap, ID badge "
-            "or mask; any vehicle waiting; any readable text on parcels or "
-            "clothing; and the surroundings (darkness, rain, an object left at "
-            "the door). Finish with ONE sentence of overall impression WITH its "
-            "visible reason, e.g. 'Overall this appears to be a food delivery, "
-            "because of the insulated bag and the Swiggy logo.' Skip anything "
-            "not visible — never pad or invent. Stay cautious: 'appears to be' "
-            "/ 'likely' / 'unable to determine'. Never state identity, exact "
-            "age, gender, or race; at most 'appears to be an adult'. Never "
-            "state emotion or intent as fact — 'appears to be smiling', never "
-            "'is happy'; never call anyone suspicious or dangerous."
+            "You are a visual scene understanding assistant for AccessAI, an "
+            "assistive system for visually impaired users. Give a detailed spoken "
+            "report of this doorbell camera view. Your output will be read aloud "
+            "— write natural flowing sentences only (no lists, no headings, no "
+            "markdown).\n\n"
+            "Structure your report in this exact order:\n"
+            "1. SCENE OPENER: Start with the total number of people and whether "
+            "the scene is indoors or outdoors if clear. Example: 'There are two "
+            "people in front of you outdoors.'\n"
+            "2. HAZARDS FIRST: If there is any immediate obstacle or hazard "
+            "(steps, bicycle, vehicle blocking entry, large object in the path), "
+            "mention it right after the opener.\n"
+            "3. EACH PERSON (left to right, nearest first): position (left / "
+            "center / right / directly in front), identity (use name from GROUND "
+            "TRUTH if provided, else 'an unknown person'), approximate distance "
+            "if estimable, action (what they are doing), carried objects, "
+            "clothing (type and colour), visible appearance (age group if clear, "
+            "hair, glasses, beard, hat — omit what is unclear).\n"
+            "4. IMPORTANT OBJECTS: vehicles, furniture, stairs, signs, animals, "
+            "bags or boxes near the door. Include position and distance.\n"
+            "5. ENVIRONMENT: lighting, weather, anything else a blind user "
+            "should know.\n\n"
+            "RULES:\n"
+            "- Identity: ONLY use names given in GROUND TRUTH. Never guess.\n"
+            "- Use cautious language: 'appears to be', 'likely', 'unable to tell'.\n"
+            "- Do not state exact age, race, or gender as fact.\n"
+            "- Do not state emotions as fact ('appears to be smiling', not 'happy').\n"
+            "- Never call anyone suspicious, dangerous, or criminal.\n"
+            "- Do not describe background clutter that is not relevant.\n"
+            "- Skip any section where nothing is visible or relevant.\n"
+            "- Aim for 4-8 sentences total — detailed but not overwhelming."
         )
         user_text = (_facts_preamble(facts)
                      + "Give the detailed spoken report of this doorbell view.")
@@ -457,8 +599,11 @@ class VLMModule:
     # ------------------------------------------------------------------ parse
     @staticmethod
     def _parse(content: str) -> dict:
-        """Pull {scene, appearance, labels, people} out of the model's reply,
-        tolerating stray markdown fences or prose around the JSON."""
+        """Pull {scene, appearance, labels, people, hazards, objects} out of the
+        model's reply, tolerating stray markdown fences or prose around the JSON.
+        Accepts both 'scene' and 'scene_summary' as the scene key.
+        """
+        print(f"[VLM RAW RESPONSE]\n{content}\n-------------------")
         text = (content or "").strip()
         # Strip ```json ... ``` fences if the model added them.
         if text.startswith("```"):
@@ -466,29 +611,46 @@ class VLMModule:
             if text[:4].lower() == "json":
                 text = text[4:]
             text = text.strip()
-        scene, appearance, labels, people = "", "", "", []
+
+        scene, appearance, labels, hazards, objects_txt = "", "", "", "", ""
+        people = []
         try:
             start, end = text.find("{"), text.rfind("}")
             if start != -1 and end != -1 and end > start:
                 obj = json.loads(text[start:end + 1])
-                scene = str(obj.get("scene", "") or "").strip()
-                appearance = str(obj.get("appearance", "") or "").strip()
-                labels = str(obj.get("labels", "") or "").strip()
-                people = VLMModule._parse_people(obj.get("people"))
+                # Accept both 'scene' and 'scene_summary' keys
+                scene       = str(obj.get("scene", "")
+                                  or obj.get("scene_summary", "") or "").strip()
+                appearance  = str(obj.get("appearance", "") or "").strip()
+                labels      = str(obj.get("labels", "")
+                                  or obj.get("ocr_text", "") or "").strip()
+                hazards     = str(obj.get("hazards",  "") or "").strip()
+                objects_txt = str(obj.get("objects",  "") or "").strip()
+                people      = VLMModule._parse_people(obj.get("people"))
             elif start == -1:
-                scene = text          # plain prose -> treat whole reply as scene
-            # else: JSON started but never closed (truncated) -> salvage below
+                # Plain prose reply — treat entire text as scene summary.
+                scene = text
+            # else: JSON opened but never closed (truncated) — salvage below.
         except Exception:
-            pass                      # malformed JSON -> salvage below
-        if not scene and not appearance and text.find("{") != -1:
-            # The reply was (broken) JSON. NEVER speak raw JSON to a blind
-            # user - fish the human-readable fields out with a regex instead.
-            scene = VLMModule._salvage_field(text, "scene")
-            appearance = appearance or VLMModule._salvage_field(text,
-                                                                "appearance")
-            labels = labels or VLMModule._salvage_field(text, "labels")
-        return {"scene_summary": scene, "appearance": appearance,
-                "ocr_text": labels, "people": people}
+            pass   # malformed JSON — salvage below
+
+        # If JSON parsing yielded nothing useful, fish fields out with regex.
+        if not scene and not people and "{" in text:
+            scene       = VLMModule._salvage_field(text, "scene") \
+                          or VLMModule._salvage_field(text, "scene_summary")
+            appearance  = appearance  or VLMModule._salvage_field(text, "appearance")
+            labels      = labels      or VLMModule._salvage_field(text, "labels")
+            hazards     = hazards     or VLMModule._salvage_field(text, "hazards")
+            objects_txt = objects_txt or VLMModule._salvage_field(text, "objects")
+
+        return {
+            "scene_summary": scene,
+            "appearance":    appearance,
+            "ocr_text":      labels,
+            "people":        people,
+            "hazards":       hazards,
+            "objects":       objects_txt,
+        }
 
     @staticmethod
     def _salvage_field(text: str, key: str) -> str:
@@ -513,9 +675,10 @@ class VLMModule:
     def _parse_people(raw) -> list:
         """Normalise the model's "people" array into a clean list of dicts.
 
-        Each entry becomes {appearance, carrying, expression} of stripped strings.
-        Anything malformed is dropped defensively so a bad element can never break
-        the whole parse (the group description just falls back to face-only data).
+        Each entry carries the full set of new spatial fields:
+        identity, position, distance, action, appearance, clothing, carrying,
+        expression. Unknown/missing fields default to empty string.
+        Anything malformed is dropped defensively.
         """
         out = []
         if not isinstance(raw, list):
@@ -524,8 +687,15 @@ class VLMModule:
             if not isinstance(item, dict):
                 continue
             out.append({
+                # New spatial / identity fields
+                "identity":   str(item.get("identity",   "") or "").strip(),
+                "position":   str(item.get("position",   "") or "").strip(),
+                "distance":   str(item.get("distance",   "") or "").strip(),
+                "action":     str(item.get("action",     "") or "").strip(),
+                "clothing":   str(item.get("clothing",   "") or "").strip(),
+                # Legacy fields kept for backward compat with downstream code
                 "appearance": str(item.get("appearance", "") or "").strip(),
-                "carrying": str(item.get("carrying", "") or "").strip(),
+                "carrying":   str(item.get("carrying",   "") or "").strip(),
                 "expression": str(item.get("expression", "") or "").strip(),
             })
         return out

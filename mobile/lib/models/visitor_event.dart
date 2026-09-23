@@ -13,6 +13,9 @@ class Person {
   final double spoofScore; // 1.0 real -> 0.0 spoof
   final String appearance; // clothing / carried (unknown only)
   final String expression; // cautious mood cue (unknown only)
+  final String clothing;
+  final String action;
+  final String position;
 
   const Person({
     required this.known,
@@ -24,6 +27,9 @@ class Person {
     required this.spoofScore,
     required this.appearance,
     required this.expression,
+    required this.clothing,
+    required this.action,
+    required this.position,
   });
 
   factory Person.fromJson(Map<String, dynamic> j) => Person(
@@ -36,6 +42,9 @@ class Person {
         spoofScore: asDouble(j['spoof_score'], 1.0),
         appearance: asStr(j['appearance']),
         expression: asStr(j['expression']),
+        clothing: asStr(j['clothing']),
+        action: asStr(j['action']),
+        position: asStr(j['position']),
       );
 }
 
