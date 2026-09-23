@@ -14,7 +14,9 @@ import 'package:dio/dio.dart';
 /// Auth: AccessAI uses ?token= query param (not Authorization header).
 class DiscoveryService {
   static const int _port = 8000;
-  static const Duration _probeTimeout = Duration(milliseconds: 1200);
+  // 2500ms tolerates congested home Wi-Fi with 254 concurrent probes;
+  // 1200ms was too aggressive and caused false "not found" on slower LANs.
+  static const Duration _probeTimeout = Duration(milliseconds: 2500);
 
   /// Scan the LAN for an AccessAI server.
   ///
@@ -114,12 +116,15 @@ class DiscoveryService {
 
       final body = resp.data;
       if (body is Map<String, dynamic>) {
-        // Look for the AccessAI-specific keys in /status response.
-        return body.containsKey('mode') ||
-            body.containsKey('app') ||
-            body.containsKey('doorbell') ||
-            body.containsKey('version') ||
-            body['app'] == 'AccessAI';
+        // Primary check: the AccessAI /status response always includes
+        // "app": "AccessAI". This is more reliable than just checking key
+        // existence (which could match any random HTTP server).
+        if (body['app'] == 'AccessAI') return true;
+        // Fallback: look for AccessAI-specific keys in /status response.
+        // "mode" + "modules" is a unique combination only AccessAI returns.
+        if (body.containsKey('mode') && body.containsKey('modules')) {
+          return true;
+        }
       }
       return false;
     } catch (_) {
@@ -127,6 +132,33 @@ class DiscoveryService {
     } finally {
       dio.close(force: true);
     }
+  }
+
+  /// Whether an interface name looks like a Wi-Fi adapter.
+  ///
+  /// Android names vary wildly across OEMs: wlan0, wlan1, wifi0, swlan0,
+  /// ap0, p2p0, etc. iOS uses en0. Linux laptops use wlp*, wlan*, wlx*.
+  /// We accept anything containing a common Wi-Fi fragment rather than
+  /// maintaining an exhaustive list.
+  static bool _isWifiInterface(String name) {
+    final n = name.toLowerCase();
+    // Common Wi-Fi interface name fragments across platforms.
+    return n.contains('wlan') ||
+        n.contains('wifi') ||
+        n.contains('wlp') ||
+        n.contains('wlx') ||
+        n.contains('swlan') ||
+        n == 'en0' || // iOS
+        n == 'en1' || // macOS secondary Wi-Fi
+        n.startsWith('ap') || // Android Wi-Fi Direct / AP
+        n.startsWith('p2p'); // Android Wi-Fi P2P
+  }
+
+  /// Whether an IP is a private LAN address.
+  static bool _isLanIp(String ip) {
+    return ip.startsWith('192.168.') ||
+        ip.startsWith('10.') ||
+        ip.startsWith('172.');
   }
 
   /// Get the device's own LAN IP address (Wi-Fi preferred).
@@ -137,30 +169,29 @@ class DiscoveryService {
         includeLoopback: false,
       );
 
-      // Prefer wlan/wifi interfaces (Android: wlan0, iOS: en0).
+      // Prefer wlan/wifi interfaces.
       for (final iface in interfaces) {
-        final name = iface.name.toLowerCase();
-        if (!name.contains('wlan') &&
-            !name.contains('wifi') &&
-            !name.contains('en0') &&
-            !name.contains('wlp')) continue;
+        if (!_isWifiInterface(iface.name)) continue;
         for (final addr in iface.addresses) {
           final ip = addr.address;
           if (ip.startsWith('127.') || ip.startsWith('169.254.')) continue;
-          if (ip.startsWith('192.168.') ||
-              ip.startsWith('10.') ||
-              ip.startsWith('172.')) return ip;
+          if (_isLanIp(ip)) return ip;
         }
       }
 
-      // Fallback: any non-loopback LAN IPv4.
+      // Fallback: any non-loopback LAN IPv4 (skips mobile data rmnet/ccmni
+      // which typically get carrier IPs outside the 192.168/10/172 ranges).
       for (final iface in interfaces) {
+        // Explicitly skip known mobile-data interfaces.
+        final n = iface.name.toLowerCase();
+        if (n.startsWith('rmnet') ||
+            n.startsWith('ccmni') ||
+            n.startsWith('clat') ||
+            n.startsWith('v4-rmnet')) continue;
         for (final addr in iface.addresses) {
           final ip = addr.address;
           if (ip.startsWith('127.') || ip.startsWith('169.254.')) continue;
-          if (ip.startsWith('192.168.') ||
-              ip.startsWith('10.') ||
-              ip.startsWith('172.')) return ip;
+          if (_isLanIp(ip)) return ip;
         }
       }
 
