@@ -39,6 +39,7 @@ Routes:
 
 import asyncio
 import collections
+from contextlib import asynccontextmanager
 import hashlib
 import hmac as _hmac
 import json
@@ -144,7 +145,15 @@ def make_app(*, pipeline, latest: LatestFrame, db, web_dir: str,
              access=None, tts=None, speech=None, wakeword=None, cfg=None,
              wakeword_command_seconds: int = 4,
              visitor_listen_seconds: int = 6) -> FastAPI:
-    app = FastAPI(title="AccessAI")
+    _loop_holder = {}
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        _loop_holder["loop"] = asyncio.get_running_loop()
+        yield
+        _loop_holder.clear()
+
+    app = FastAPI(title="AccessAI", lifespan=lifespan)
 
     # --- Phase 17: bearer-token auth + rate limiting (opt-in via config) -----
     # AUTH_TOKEN set => every non-public route requires
@@ -449,15 +458,9 @@ def make_app(*, pipeline, latest: LatestFrame, db, web_dir: str,
 
     # Thread-safe broadcast bridge (Phase 10). The always-on wake-word listener
     # runs in its OWN thread (outside the event loop), so it can't await
-    # broadcast() directly. We capture the running loop at startup and let the
-    # wake callback schedule a broadcast onto it. If the loop isn't up yet, the
-    # push is simply skipped - the spoken answer still happens regardless.
-    _loop_holder = {}
-
-    @app.on_event("startup")
-    async def _capture_loop():
-        _loop_holder["loop"] = asyncio.get_running_loop()
-
+    # broadcast() directly. We capture the running loop at startup via lifespan
+    # and let the wake callback schedule a broadcast onto it. If the loop isn't up
+    # yet, the push is simply skipped - the spoken answer still happens regardless.
     def broadcast_threadsafe(payload: dict) -> None:
         loop = _loop_holder.get("loop")
         if loop is None:
@@ -811,6 +814,8 @@ def make_app(*, pipeline, latest: LatestFrame, db, web_dir: str,
         if tr is None:
             raise HTTPException(503, "Translation is not available.")
         tr.set_user_language(lang)
+        if access is not None:
+            access.user_lang = tr.user_language
         # Persist next to the DB (data/), derived from history_dir's parent so we
         # don't need to import config here. Sanitise to a short code first.
         code = "".join(c for c in tr.user_language if c.isalnum() or c in "-_")[:16]
@@ -986,9 +991,9 @@ def make_app(*, pipeline, latest: LatestFrame, db, web_dir: str,
     # --- Phase 14: phone-side speech + text/voice commands (mobile app) -------
     @app.get("/speak_audio")
     async def speak_audio(text: str = "", lang: str = ""):
-        """Synthesize `text` with the natural Kokoro voice and return WAV bytes for
+        """Synthesize `text` with natural neural voice and return WAV bytes for
         the PHONE to play (mobile Blind-mode speech). Does NOT speak on the server.
-        `lang` (Phase 17): ISO hint routing non-English text to a matching voice.
+        `lang`: ISO hint routing non-English text to a matching neural voice.
         Clean-JSON 503 when no synth backend is available -> the app falls back to
         the browser Web Speech API. Runs synthesis OFF the announcement worker."""
         text = (text or "").strip()
@@ -996,9 +1001,13 @@ def make_app(*, pipeline, latest: LatestFrame, db, web_dir: str,
             raise HTTPException(400, "text is required")
         if tts is None or not hasattr(tts, "synth_wav_bytes"):
             raise HTTPException(503, "TTS synthesis is not available.")
+        eff_lang = (lang or "").strip().lower()
+        if not eff_lang:
+            tr = getattr(pipeline, "translate", None)
+            eff_lang = getattr(tr, "user_language", "en") if tr else "en"
         loop = asyncio.get_event_loop()
         wav, _sr = await loop.run_in_executor(
-            None, lambda: tts.synth_wav_bytes(text, lang=lang))
+            None, lambda: tts.synth_wav_bytes(text, lang=eff_lang))
         if not wav:
             raise HTTPException(
                 503, "Could not synthesize audio; use the browser voice fallback.")
@@ -1022,6 +1031,17 @@ def make_app(*, pipeline, latest: LatestFrame, db, web_dir: str,
             None, lambda: voice_commands.handle_command(
                 intent, cmd_args, pipeline=pipeline, db=db, latest=latest,
                 access=access))
+        # If user language is non-English, translate the answer so the phone speaks
+        # natively in that language
+        tr = getattr(pipeline, "translate", None)
+        user_lang = getattr(tr, "user_language", "en") if tr else "en"
+        if user_lang != "en" and tr and tr.available():
+            try:
+                tr_ans = tr.translate(answer, src_lang="en", target_lang=user_lang)
+                if tr_ans and tr_ans.strip():
+                    answer = tr_ans
+            except Exception:
+                pass
         # Nudge open dashboards (mirrors /listen's "voice" broadcast shape).
         await broadcast({"type": "voice", "intent": intent, "answer": answer,
                          "text": text})
@@ -1446,6 +1466,51 @@ def make_app(*, pipeline, latest: LatestFrame, db, web_dir: str,
             "max_clips": getattr(cfg, "VIDEO_MAX_CLIPS", 500),
         }
 
+    @app.get("/event/{event_id}/clip")
+    def event_clip(event_id: str):
+        """Stream the video clip associated with a specific event.
+
+        Looks up the clip in three ways:
+        1. The event's video_path field in the DB
+        2. A clip file named <event_id>.mp4 in the clips directory
+        3. The recorder's metadata JSON files (by event_id)
+        """
+        # Sanitize
+        if ".." in event_id or "/" in event_id or "\\" in event_id:
+            raise HTTPException(400, "invalid event_id")
+
+        recorder = getattr(app.state, "recorder", None)
+        clips_dir = getattr(recorder, "_clips_dir", None) if recorder else None
+        if clips_dir is None:
+            clips_dir = pathlib.Path(getattr(cfg, "VIDEO_CLIPS_DIR", "data/clips"))
+
+        # Method 1: check video_path from the DB
+        ev = db.get_event(event_id)
+        if ev:
+            vp = (ev.get("video_path") or "").strip()
+            if vp:
+                path = clips_dir / vp
+                if path.exists():
+                    return FileResponse(str(path), media_type="video/mp4",
+                                        filename=vp)
+
+        # Method 2: direct event_id.mp4 filename
+        direct = clips_dir / f"{event_id}.mp4"
+        if direct.exists():
+            return FileResponse(str(direct), media_type="video/mp4",
+                                filename=direct.name)
+
+        # Method 3: scan metadata JSON files
+        if recorder is not None:
+            clip_name = recorder.get_clip_for_event(event_id)
+            if clip_name:
+                path = clips_dir / clip_name
+                if path.exists():
+                    return FileResponse(str(path), media_type="video/mp4",
+                                        filename=clip_name)
+
+        raise HTTPException(404, "no clip found for this event")
+
     # --- Phase 10: hardware doorbell webhook (ESP32-CAM readiness) -----------
     @app.post("/ring")
     async def ring(request: Request):
@@ -1464,6 +1529,8 @@ def make_app(*, pipeline, latest: LatestFrame, db, web_dir: str,
             body = await request.body()
         except Exception:
             body = b""
+        if len(body) > _MAX_UPLOAD_BYTES:
+            raise HTTPException(413, f"Body too large. Max: {_MAX_UPLOAD_BYTES // (1024*1024)} MB.")
         if ring_secret:
             sig = request.headers.get("x-ring-signature", "")
             want = _hmac.new(ring_secret.encode(), body,

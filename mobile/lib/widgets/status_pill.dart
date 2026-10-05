@@ -3,11 +3,10 @@ import 'package:flutter/material.dart';
 import '../core/motion.dart';
 import '../core/tokens.dart';
 
-/// A small glass status pill with a glowing dot (or icon) + label. Used for
-/// connection state, module health, and mode. Colour is conveyed by BOTH the
-/// dot and the text (never colour alone — WCAG 1.4.1), and the whole pill is
-/// one semantics node so a screen reader reads "Connected" not "green dot,
-/// Connected". The dot breathes gently; it holds still under reduce-motion.
+/// A small status pill with icon + label. Used for connection state (Offline •
+/// Local AI), mode indicators, and status badges. Colour is conveyed by BOTH
+/// the icon and the text (WCAG 1.4.1). Clean rounded pill with soft colored
+/// background matching the reference design.
 class StatusPill extends StatelessWidget {
   const StatusPill({
     super.key,
@@ -24,46 +23,36 @@ class StatusPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
+    // Derive a soft background from the color
+    final bgColor = _softBg(color);
+    final textColor = _darkVariant(color);
+
     return Semantics(
       label: semanticLabel ?? label,
       container: true,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: T.s12, vertical: T.s8),
+        padding: const EdgeInsets.symmetric(horizontal: T.s12, vertical: T.s6),
         decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              color.withValues(alpha: 0.22),
-              color.withValues(alpha: 0.10),
-            ],
-          ),
+          color: bgColor,
           borderRadius: BorderRadius.circular(T.rPill),
-          border: Border.all(color: color.withValues(alpha: 0.45)),
-          boxShadow: [
-            BoxShadow(
-              color: color.withValues(alpha: 0.18),
-              blurRadius: 14,
-              spreadRadius: -2,
-            ),
-          ],
+          border: Border.all(color: color.withValues(alpha: 0.2)),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             if (icon != null)
-              Icon(icon, size: 16, color: color)
+              Icon(icon, size: 15, color: textColor)
             else
               _BreathingDot(color: color),
-            const SizedBox(width: T.s8),
+            const SizedBox(width: T.s6),
             Flexible(
               child: Text(
                 label,
                 overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                      color: cs.onSurface,
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: textColor,
                       fontWeight: FontWeight.w600,
+                      fontSize: 12,
                     ),
               ),
             ),
@@ -71,6 +60,22 @@ class StatusPill extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Color _softBg(Color c) {
+    if (c == T.danger) return T.dangerBg;
+    if (c == T.known || c == T.success) return T.knownBg;
+    if (c == T.unknown || c == T.accent) return T.accentBg;
+    if (c == T.primary) return T.primaryLighter;
+    return c.withValues(alpha: 0.1);
+  }
+
+  Color _darkVariant(Color c) {
+    if (c == T.danger) return const Color(0xFFB91C1C);
+    if (c == T.known || c == T.success) return const Color(0xFF15803D);
+    if (c == T.unknown || c == T.accent) return const Color(0xFFB45309);
+    if (c == T.primary) return T.primary;
+    return c;
   }
 }
 
@@ -108,17 +113,11 @@ class _BreathingDotState extends State<_BreathingDot>
     final still = context.reduceMotion;
     _sync(still);
     final dot = Container(
-      width: 10,
-      height: 10,
+      width: 8,
+      height: 8,
       decoration: BoxDecoration(
         color: widget.color,
         shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: widget.color.withValues(alpha: 0.7),
-            blurRadius: 8,
-          ),
-        ],
       ),
     );
     final c = _c;

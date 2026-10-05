@@ -199,7 +199,7 @@ class _FakeAccess:
         self.mode = mode
         return mode
 
-    def speak_text(self, text):
+    def speak_text(self, text, lang=""):
         self.spoken.append(text)
         return True
 

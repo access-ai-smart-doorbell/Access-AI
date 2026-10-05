@@ -4,6 +4,7 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+*.log
 
 # AccessAI runtime data (keep folder structure via .gitkeep files)
 data/*

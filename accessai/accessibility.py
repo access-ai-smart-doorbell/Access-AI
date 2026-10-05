@@ -103,80 +103,161 @@ def _plural_person(n: int) -> str:
 def _describe_person_rich(p, index: int = 0, total: int = 1) -> str:
     """Build the richest possible description for ONE Person object.
 
-    Priority: position → identity → age/gender → action →
-              clothing/appearance → accessories → carrying → mood.
+    Priority: position → identity → age/gender/build → hairstyle →
+              appearance (facial hair, glasses) → clothing → accessories →
+              hands → carrying → footwear → action → mood.
 
-    Works with both VLM-enriched data (clothing, action, position fields)
+    Works with both VLM-enriched data (clothing, hairstyle, hands, etc.)
     and pure InsightFace data (age, gender, box) for YOLO-only fallback.
     Returns a complete sentence.
     """
-    known     = getattr(p, "known", False)
-    name      = getattr(p, "name", "") or ""
-    age       = _age_band(getattr(p, "age", None))
-    gender    = (getattr(p, "gender", "") or "").strip().lower()
-    noun      = gender if gender in ("man", "woman") else "person"
+    known      = getattr(p, "known", False)
+    name       = getattr(p, "name", "") or ""
+    age_grp    = (getattr(p, "age_group", "") or "").strip().lower()
+    age_bnd    = _age_band(getattr(p, "age", None))
+    age        = age_grp or age_bnd
+    gender     = (getattr(p, "gender", "") or "").strip().lower()
+    noun       = gender if gender in ("man", "woman") else "person"
+    build      = (getattr(p, "build", "") or "").strip()
 
     # Spatial position — prefer VLM field, fall back to box calculation.
-    position  = (getattr(p, "position", "") or "").strip().lower()
+    position   = (getattr(p, "position", "") or "").strip().lower()
     if not position:
         box = getattr(p, "box", None)
         if box:
             position = _position_from_box(box)
 
     # VLM-populated fields
-    clothing  = (getattr(p, "clothing",   "") or "").strip().rstrip(".")
-    appearance= (getattr(p, "appearance", "") or "").strip().rstrip(".")
-    action    = (getattr(p, "action",     "") or "").strip().rstrip(".")
-    carrying  = (getattr(p, "carrying",   "") or "").strip().rstrip(".")
-    expression= (getattr(p, "expression", "") or "").strip().rstrip(".")
-    is_spoof  = getattr(p, "is_spoof", False)
+    clothing    = (getattr(p, "clothing",    "") or "").strip().rstrip(".")
+    hairstyle   = (getattr(p, "hairstyle",   "") or "").strip().rstrip(".")
+    appearance  = (getattr(p, "appearance",  "") or "").strip().rstrip(".")
+    hands       = (getattr(p, "hands",       "") or "").strip().rstrip(".")
+    accessories = (getattr(p, "accessories", "") or "").strip().rstrip(".")
+    footwear    = (getattr(p, "footwear",    "") or "").strip().rstrip(".")
+    action      = (getattr(p, "action",      "") or "").strip().rstrip(".")
+    carrying    = (getattr(p, "carrying",    "") or "").strip().rstrip(".")
+    expression  = (getattr(p, "expression",  "") or "").strip().rstrip(".")
+    is_spoof    = getattr(p, "is_spoof", False)
 
     # ── Subject ──────────────────────────────────────────────────────────
     if known and name and name != "Unknown":
         subject = name
     else:
-        # Build unknown descriptor: age-band + gender noun
+        # Build unknown descriptor: age-band/group + gender noun
         if age in ("child", "teenager"):
             desc = age
-        elif age in ("middle-aged", "elderly"):
-            desc = f"{age} {noun}".strip()
+        elif age in ("young adult", "middle-aged", "elderly"):
+            desc = f"{age} {noun}".strip() if noun != "person" else age
         elif age:
             desc = f"{noun} ({age})" if noun != "person" else f"person {age}"
         else:
-            desc = noun
+            desc = noun if noun != "person" else "visitor"
         subject = f"an unknown {desc}"
 
     # ── Position clause ───────────────────────────────────────────────────
     pos_clause = ""
-    if position and position != "center":
+    if position and position not in ("center", "directly in front", "front"):
         pos_clause = f"on your {position}"
-    elif position == "center":
+    elif position in ("center", "directly in front", "front"):
         pos_clause = "directly in front of you"
 
     # ── Detail clauses ────────────────────────────────────────────────────
     details = []
-    # Clothing (most useful for ID)
+
+    # Build / notable physique
+    if build and build.lower() not in ("average", "average build"):
+        details.append(f"{build}")
+
+    # Clothing (most useful visual identifier)
     if clothing:
-        details.append(f"wearing {clothing}")
+        if clothing.lower().startswith("wearing "):
+            details.append(clothing)
+        else:
+            details.append(f"wearing {clothing}")
     elif appearance and not known:
-        # Use VLM appearance as fallback clothing description
         details.append(appearance)
-    # Action / movement
-    if action and action.lower() not in ("standing",):
-        details.append(action)
+
+    # Hairstyle
+    if hairstyle:
+        hs = hairstyle.strip()
+        if hs.lower().startswith("with "):
+            details.append(hs)
+        elif hs.lower().startswith(("fade", "undercut", "buzz cut", "crew cut", "ponytail", "bun")):
+            details.append(f"with a {hs} haircut" if not (hs.lower().endswith("haircut") or hs.lower().endswith("hair")) else f"with a {hs}")
+        elif not hs.lower().startswith(("a ", "short", "long", "curly", "straight", "black", "brown")):
+            details.append(f"with a {hs}")
+        else:
+            details.append(f"with {hs}")
+
+    # Facial features (facial hair, glasses, etc.)
+    if appearance and clothing:
+        parts_app = [pt.strip() for pt in appearance.split(",") if pt.strip()]
+        new_app_parts = []
+        for pt in parts_app:
+            pt_low = pt.lower()
+            if any(k in pt_low for k in ("wearing", "hair:", "carrying", "hands:")):
+                continue
+            if clothing and pt_low in clothing.lower():
+                continue
+            if hairstyle and pt_low in hairstyle.lower():
+                continue
+            new_app_parts.append(pt)
+        if new_app_parts:
+            app_str = ", ".join(new_app_parts)
+            if app_str.lower().startswith(("with ", "has ")):
+                details.append(app_str)
+            else:
+                details.append(f"with {app_str}")
+
+    # Accessories
+    if accessories:
+        acc = accessories.strip()
+        if acc.lower().startswith("wearing "):
+            details.append(acc)
+        else:
+            details.append(f"wearing {acc}")
+
+    # Hands
+    if hands:
+        h = hands.strip()
+        if h.lower() in ("empty", "empty at sides", "empty at their sides", "empty at his sides", "empty at her sides"):
+            details.append("hands empty at sides")
+        elif h.lower().startswith(("holding", "touching", "gesturing", "in pockets", "folded")):
+            details.append(f"hands {h}")
+        else:
+            details.append(f"hands are {h}")
+
     # Carried objects
-    if carrying:
+    if carrying and (not hands or carrying.lower() not in hands.lower()):
         details.append(f"carrying {carrying}")
-    # Mood
+
+    # Footwear
+    if footwear:
+        fw = footwear.strip()
+        if fw.lower().startswith("wearing "):
+            details.append(fw)
+        else:
+            details.append(f"wearing {fw}")
+
+    # Action / movement
+    if action and action.lower() not in ("standing", "standing still", ""):
+        details.append(action)
+
+    # Mood / expression
     if expression:
-        details.append(f"appears {expression}")
+        exp = expression.strip()
+        if exp.lower().startswith("appears "):
+            details.append(exp)
+        elif exp.lower().startswith("appears to be "):
+            details.append(exp)
+        else:
+            details.append(f"appears {exp}")
+
     # Spoof warning — always appended, never softened
     if is_spoof:
         details.append("⚠ shown as a photo — possible spoof")
 
     # ── Assemble sentence ─────────────────────────────────────────────────
-    # "Vinay is on your left, wearing a blue shirt, carrying a phone."
-    # "An unknown young man is on your right, wearing a white T-shirt."
     parts = [subject]
     if pos_clause:
         parts[0] += f" is {pos_clause}"
@@ -186,12 +267,28 @@ def _describe_person_rich(p, index: int = 0, total: int = 1) -> str:
     if details:
         parts[0] += ", " + ", ".join(details)
 
-    return parts[0].rstrip(",") + "."
+    sentence = parts[0].rstrip(",") + "."
+    if sentence and sentence[0].islower():
+        sentence = sentence[0].upper() + sentence[1:]
+    return sentence
 
 
 def _describe_unknown_person(p) -> str:
-    """Compact inline description for use inside multi-person roster."""
-    return _describe_person_rich(p)
+    """Compact description of one unknown person: age band + gender."""
+    gender = (getattr(p, "gender", "") or "").strip().lower()
+    noun = gender if gender in ("man", "woman") else ""
+    age = _age_band(getattr(p, "age", None))
+
+    if age in ("child", "teenager"):
+        base = age
+    elif age in ("middle-aged", "elderly"):
+        base = f"{age} {noun}".strip() if noun else f"{age} person"
+    elif age:
+        base = f"{noun} {age}" if noun else f"person {age}"
+    else:
+        base = noun or "visitor"
+
+    return f"an unknown {base}"
 
 
 def _known_detail_sentence(p) -> str:
@@ -204,21 +301,13 @@ def _known_detail_sentence(p) -> str:
 # ---------------------------------------------------------------------------
 
 def _multi_who(ev, compact=False) -> list:
-    """Build the WHO sentences for a scene with MORE THAN ONE subject.
-
-    Output format (user requirement):
-      "There are 3 people at the door. 2 are known: Vinay and Suhaib.
-       1 unknown person on your right — a young man in a blue T-shirt."
-
-    `compact=True` is ignored — we always produce the full count + breakdown
-    because it matches the user's explicit priority-order spec.
-    """
+    """Build the WHO sentences for a scene with MORE THAN ONE subject."""
     if getattr(ev, "is_spoof", False):
         return ["Warning. The faces shown to the camera appear to be photos."]
 
     people    = list(getattr(ev, "people", []) or [])
     extra     = int(getattr(ev, "extra_unknown", 0) or 0)
-    total     = len(people) + extra
+    total     = max(len(people) + extra, getattr(ev, "visitor_count", 0))
 
     known_people   = [p for p in people
                       if getattr(p, "known", False)
@@ -234,39 +323,56 @@ def _multi_who(ev, compact=False) -> list:
             seen.add(p.name)
             known_unique.append(p)
 
-    known_count   = len(known_unique)
-    unknown_count = len(unknown_people) + extra
-
+    names = [p.name for p in known_unique]
+    unknown_count = total - len(known_unique)
     sentences = []
 
-    # ── Line 1: count summary ────────────────────────────────────────────
-    summary = f"There {'is' if total == 1 else 'are'} {total} {_plural_person(total)} at the door."
-    if known_count and unknown_count:
-        known_names = _join_list([p.name for p in known_unique])
-        summary += (f" {known_count} known ({known_names}),"
-                    f" {unknown_count} unknown.")
-    elif known_count:
-        known_names = _join_list([p.name for p in known_unique])
-        summary += f" All known: {known_names}."
-    elif unknown_count:
-        summary += f" All unknown."
-    sentences.append(summary)
+    if compact:
+        if names:
+            verb = "is" if len(names) == 1 else "are"
+            s = f"{_join_list(names)} {verb} at the door"
+            if unknown_count > 0:
+                s += f" with {unknown_count} other {_plural_person(unknown_count)}"
+            sentences.append(s + ".")
+        else:
+            sentences.append(f"{total} people are at the door.")
+        spoofed = sum(1 for p in unknown_people if getattr(p, "is_spoof", False))
+        if spoofed == 1:
+            sentences.append("Warning. One face shown to the camera appears to be a photo, a possible spoof.")
+        elif spoofed > 1:
+            sentences.append(f"Warning. {spoofed} of the faces shown to the camera appear to be photos, possible spoofs.")
+        return sentences
 
-    # ── Line 2+: per-person rich detail ──────────────────────────────────
-    # Sort left-to-right by face box x position
-    all_people = sorted(people, key=lambda p: (getattr(p, "box", (0,)) or (0,))[0])
-    CAP = 4   # max spoken descriptions to keep audio short
-    for i, p in enumerate(all_people[:CAP]):
-        sentence = _describe_person_rich(p, index=i, total=total)
-        sentences.append(sentence)
+    if names:
+        verb = "is" if len(names) == 1 else "are"
+        s = f"{_join_list(names)} {verb} at the door"
+        described = [_describe_unknown_person(p) for p in unknown_people[:3]]
+        others = (len(unknown_people) - len(described)) + extra
 
-    if extra > 0:
-        sentences.append(
-            f"{extra} additional {'person' if extra == 1 else 'people'} "
-            f"{'is' if extra == 1 else 'are'} present but not clearly visible."
-        )
+        def _others_clause():
+            return f"{others} other {_plural_person(others)}"
 
-    # Spoof warnings
+        tail = _join_list(described)
+        if others:
+            tail = f"{tail}, and {_others_clause()}" if tail else _others_clause()
+        if tail:
+            s += ", along with " + tail
+        s += "."
+        sentences.append(s)
+    else:
+        described = [_describe_unknown_person(p) for p in unknown_people[:3]]
+        others = (len(unknown_people) - len(described)) + extra
+        if described:
+            verb = "is" if (len(described) == 1 and not others) else "are"
+            s = f"There {verb} " + _join_list(described)
+            if others:
+                s += f", and {others} other {_plural_person(others)}"
+            sentences.append(s + " at the door.")
+        elif others:
+            sentences.append(f"{others} {_plural_person(others)} are at the door.")
+        else:
+            sentences.append(f"{total} people are at the door.")
+
     spoofed = sum(1 for p in unknown_people if getattr(p, "is_spoof", False))
     if spoofed == 1:
         sentences.append("Warning. One face appears to be a photo — possible spoof.")
@@ -286,11 +392,10 @@ def compose_announcement(ev) -> str:
     Priority:
       1. Hazards/obstacles (VLM hazards field or YOLO)
       2. Objects in path
-      3. Number of people + known/unknown count
-      4. Per-person: position → identity → action → clothing → carrying
-      5. VLM scene summary (environment/background)
-      6. OCR text (signage, parcels)
-      7. What the visitor said (speech)
+      3. Number of people + known/unknown count + full rich person description
+      4. VLM scene summary (environment/background)
+      5. OCR text (signage, parcels)
+      6. What the visitor said (speech)
     """
     known  = ev.identity.known
     people = list(getattr(ev, "people", []) or [])
@@ -305,47 +410,72 @@ def compose_announcement(ev) -> str:
         h = hazards.rstrip(".")
         parts.append(f"Warning: {h}.")
 
-    # ── 2 & 3. Person count + who ─────────────────────────────────────────
+    # ── 2 & 3. Person count + who + rich description ─────────────────────
+    scene = _clean_scene(getattr(ev, "scene_summary", ""))
+    compact = bool(scene)
+
     if getattr(ev, "is_spoof", False):
         parts.append("Warning. A face was shown to the camera but appears to be a photo.")
 
     elif multi:
-        who_sentences = _multi_who(ev)
+        who_sentences = _multi_who(ev, compact=compact)
         parts.extend(who_sentences)
 
     else:
         # Single-subject path
+        single = list(getattr(ev, "people", []) or [])
+        scene_describes_person = bool(
+            scene and len(scene) > 40
+            and any(w in scene.lower() for w in ("wearing", "jersey", "shirt", "jacket", "top", "dress", "kurta", "suit", "hair", "fade", "standing", "sitting", "walking"))
+        )
+
         if known:
-            parts.append(f"{ev.identity.name} is at the door.")
-            # Rich detail sentence
-            single = list(getattr(ev, "people", []) or [])
             if single:
-                detail = _describe_person_rich(single[0])
-                # Avoid duplicating "is at the door" if no extra detail
-                if detail and detail != f"{ev.identity.name} is at the door.":
-                    parts.append(detail)
+                p0 = single[0]
+                # If scene already describes the person in detail, avoid duplicating the full clothing/hair sentence
+                if scene_describes_person:
+                    pos = getattr(p0, "position", "").strip().lower()
+                    pos_clause = f" on your {pos}" if pos and pos not in ("center", "directly in front", "front") else (" directly in front of you" if pos in ("center", "directly in front", "front") else "")
+                    parts.append(f"{ev.identity.name} is{pos_clause or ' at the door'}.")
+                else:
+                    detail = _describe_person_rich(p0)
+                    parts.append(detail if detail else f"{ev.identity.name} is at the door.")
+            else:
+                parts.append(f"{ev.identity.name} is at the door.")
+            if single and getattr(single[0], "is_spoof", False):
+                parts.append("Warning. A face was shown to the camera but appears to be a photo.")
         elif getattr(ev, "reid_seen_count", 0) >= 2:
             desc = _person_desc_from_ev(ev)
             subject = f"unknown {desc}" if desc else "unknown visitor"
             parts.append(f"The same {subject} has come {ev.reid_seen_count} times today.")
-            single = list(getattr(ev, "people", []) or [])
+            if single and not scene_describes_person:
+                detail = _describe_person_rich(single[0])
+                if detail:
+                    parts.append(detail)
+        elif ev.visitor_count > 1:
+            parts.append(f"{ev.visitor_count} unknown visitors are at the door.")
+        elif ev.visitor_count == 1:
             if single:
-                parts.append(_describe_person_rich(single[0]))
-        elif ev.visitor_count >= 1:
-            single = list(getattr(ev, "people", []) or [])
-            if single:
-                parts.append(_describe_person_rich(single[0]))
+                if scene_describes_person:
+                    desc = _person_desc_from_ev(ev)
+                    subj = f"An unknown {desc}" if desc else "An unknown visitor"
+                    parts.append(f"{subj} is at the door.")
+                else:
+                    detail = _describe_person_rich(single[0])
+                    if detail:
+                        parts.append(detail)
+                    else:
+                        desc = _person_desc_from_ev(ev)
+                        subj = f"An unknown {desc}" if desc else "An unknown visitor"
+                        parts.append(f"{subj} is at the door.")
             else:
                 desc = _person_desc_from_ev(ev)
-                if desc:
-                    parts.append(f"An unknown {desc} is at the door.")
-                else:
-                    parts.append("An unknown visitor is at the door.")
+                subj = f"An unknown {desc}" if desc else "An unknown visitor"
+                parts.append(f"{subj} is at the door.")
         else:
             parts.append("The doorbell rang but no one is clearly visible.")
 
     # ── 4. VLM scene / environment ────────────────────────────────────────
-    scene = _clean_scene(getattr(ev, "scene_summary", ""))
     if scene:
         parts.append(scene if scene.endswith(".") else scene + ".")
 
@@ -404,9 +534,14 @@ def _unknown_who(ev) -> str:
 class AccessibilityEngine:
     """Composes announcements and delivers them per accessibility mode."""
 
-    def __init__(self, tts, mode: str = "both"):
+    def __init__(self, tts, mode: str = "both", user_lang: str = "en"):
         self.tts  = tts
         self.mode = mode if mode in _VALID_MODES else "both"
+        # The user's chosen language (ISO code). When non-English, deliver()
+        # passes it to TTS so the announcement is spoken with a matching
+        # neural voice (e.g. Hindi → hi-IN-SwaraNeural) instead of reading
+        # non-English text with Kokoro's English phonemes.
+        self.user_lang = (user_lang or "en").strip().lower()
 
     def deliver(self, ev, speak: bool = True) -> str:
         """Compose the announcement and speak/display it.
@@ -420,7 +555,9 @@ class AccessibilityEngine:
         ev.announcement_text = text
         if speak and self.mode in ("blind", "both"):
             from .visitor_event import alert_kind
-            self.tts.speak(text, earcon=alert_kind(ev))
+            # compose_announcement produces English text; pipeline handles
+            # translation for non-English target languages.
+            self.tts.speak(text, earcon=alert_kind(ev), lang="en")
         return text
 
     def set_mode(self, mode: str) -> str:
@@ -435,4 +572,6 @@ class AccessibilityEngine:
         Always speaks regardless of mode — a reply is an explicit user action.
         `lang` hints the language so a translated sentence uses a matching voice.
         """
-        return self.tts.speak(text, lang=lang)
+        hint = lang or self.user_lang or "en"
+        return self.tts.speak(text, lang=hint)
+

@@ -64,6 +64,12 @@ class Person:
     clothing: str = ""                 # clothing type + colour, e.g. "blue T-shirt, jeans"
     action: str = ""                   # what person is doing, e.g. "walking toward camera"
     carrying: str = ""                 # held objects, e.g. "backpack, phone"
+    hairstyle: str = ""                # e.g. "fade with black hair", "curly brown hair"
+    hands: str = ""                    # e.g. "empty at sides", "holding phone", "in pockets"
+    build: str = ""                    # e.g. "slim", "average build", "tall"
+    age_group: str = ""                # e.g. "young adult", "child", "elderly"
+    footwear: str = ""                 # e.g. "white sneakers", "sandals"
+    accessories: str = ""             # e.g. "watch", "glasses", "cap"
 
 
 @dataclass
@@ -128,8 +134,12 @@ class VisitorEvent:
     confidence: float = 0.0
     announcement_text: str = ""        # final sentence for TTS + UI
 
+    # --- Status (Phase 20) ---
+    status: str = "detected"           # "detected" (instant local) -> "analyzed" (VLM complete)
+
     # --- Storage ---
     snapshot_path: str = ""
+    video_path: str = ""               # filename of the recorded MP4 clip (Phase 19)
 
     def to_dict(self) -> dict:
         """Plain-dict view for JSON / DB. Nested dataclasses become dicts.
@@ -137,6 +147,11 @@ class VisitorEvent:
         Flutter, webhooks) keys channel treatment off one field."""
         d = asdict(self)
         d["alert_kind"] = alert_kind(self)
+        d["status"] = getattr(self, "status", "detected") or ("analyzed" if self.scene_summary else "detected")
+        d["person_count"] = self.visitor_count
+        d["identity_status"] = "known" if (self.identity and self.identity.known) else "unknown"
+        d["scene_description"] = self.scene_summary
+        d["snapshot"] = f"/snapshot/{self.event_id}.jpg"
         return d
 
 

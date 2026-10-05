@@ -16,7 +16,6 @@ from typing import Optional, Union
 
 try:
     import cv2
-    import numpy as np
     _HAS_CV2 = True
     _IMPORT_ERR: Optional[Exception] = None
 except Exception as e:                                # pragma: no cover

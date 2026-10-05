@@ -59,8 +59,8 @@ class ApiService {
       _tq('$baseUrl/known_photo/${Uri.encodeComponent(name)}');
   String snapshotUrl(String eventId) =>
       _tq('$baseUrl/snapshot/${Uri.encodeComponent(eventId)}');
-  String speakAudioUrl(String text) =>
-      _tq('$baseUrl/speak_audio?text=${Uri.encodeQueryComponent(text)}');
+  String speakAudioUrl(String text, [String lang = '']) =>
+      _tq('$baseUrl/speak_audio?text=${Uri.encodeQueryComponent(text)}${lang.isNotEmpty ? '&lang=${Uri.encodeQueryComponent(lang)}' : ''}');
 
   Uri get eventsWsUri {
     final u = Uri.parse(baseUrl);

@@ -229,3 +229,54 @@ def test_alert_kind_always_in_taxonomy():
     for ev in (_ev(identity=Identity(known=True, name="A")),
                _ev(intent="likely delivery"), _ev()):
         assert alert_kind(ev) in ALERT_KINDS
+
+
+def test_no_appears_appears_stutter_and_capitalization():
+    """Ensure 'appears calm' doesn't produce 'appears appears calm' and sentence is capitalized."""
+    p = Person(known=False, age=25, gender="woman", expression="appears calm", clothing="blue shirt")
+    ev = _ev(people=[p], visitor_count=1)
+    text = compose_announcement(ev)
+    assert "appears appears" not in text
+    assert "appears calm" in text
+    assert text[0].isupper()
+
+
+def test_single_person_with_scene_includes_rich_details():
+    """When a VLM scene is present, single known or unknown person includes rich person details (clothing, etc.)."""
+    p = Person(known=True, name="Vinay", clothing="white jersey with number 19", box=(0, 0, 10, 10))
+    ev = _ev(
+        identity=Identity(known=True, name="Vinay"),
+        people=[p],
+        visitor_count=1,
+        scene_summary="There is one person, Vinay, lying down on the right side.",
+    )
+    text = compose_announcement(ev)
+    assert "Vinay" in text
+    assert "white jersey with number 19" in text
+    assert "lying down on the right side." in text
+
+
+def test_known_person_full_rich_description():
+    """Verify hairstyle, facial features, clothing, and hands are all spoken."""
+    p = Person(
+        known=True,
+        name="Vinay",
+        position="center",
+        clothing="white Spain national team away jersey with maroon stripes",
+        hairstyle="fade haircut",
+        appearance="light stubble and mustache",
+        hands="empty at sides",
+    )
+    ev = _ev(
+        identity=Identity(known=True, name="Vinay"),
+        people=[p],
+        visitor_count=1,
+    )
+    text = compose_announcement(ev)
+    assert "Vinay is directly in front of you" in text
+    assert "wearing white Spain national team away jersey" in text
+    assert "with a fade haircut" in text
+    assert "with light stubble and mustache" in text
+    assert "hands empty at sides" in text
+
+

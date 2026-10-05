@@ -74,11 +74,10 @@ echo "== 1/3  Everything resolvable, under the hard constraints =="
 $PY -m pip install -r requirements.txt -c constraints.txt
 
 echo
-echo "== 2/3  kokoro-onnx WITHOUT deps (its numpy/onnxruntime bounds are over-tight) =="
-# Its own safe deps are already declared in requirements.txt (edge-tts,
-# soundfile, colorlog, espeakng-loader, phonemizer-fork), so --no-deps leaves
-# nothing missing.
-$PY -m pip install --no-deps kokoro-onnx==0.4.9
+echo "== 2/3  kokoro-onnx and openwakeword WITHOUT deps =="
+# Their safe deps are already declared in requirements.txt, so --no-deps leaves
+# nothing missing. (kokoro-onnx over-tight bounds; openwakeword tflite-runtime issue)
+$PY -m pip install --no-deps kokoro-onnx==0.4.9 openwakeword==0.6.0
 
 echo
 echo "== 3/3  Verification =="

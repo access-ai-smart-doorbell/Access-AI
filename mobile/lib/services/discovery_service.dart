@@ -187,7 +187,9 @@ class DiscoveryService {
         if (n.startsWith('rmnet') ||
             n.startsWith('ccmni') ||
             n.startsWith('clat') ||
-            n.startsWith('v4-rmnet')) continue;
+            n.startsWith('v4-rmnet')) {
+          continue;
+        }
         for (final addr in iface.addresses) {
           final ip = addr.address;
           if (ip.startsWith('127.') || ip.startsWith('169.254.')) continue;

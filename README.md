@@ -546,10 +546,10 @@ Every module is verified at boot and reported via `GET /status` and the System H
 | **Visitor Re-ID** | OSNet `osnet_x0_25.onnx` | HSV color histogram | ✅ **Upgraded** |
 | **Wake Word** | Custom "Hey Access" `.onnx` | Pretrained "Hey Jarvis" | ✅ **Upgraded** |
 | **Neural TTS** | Kokoro-ONNX v1.0 | Edge-TTS → pyttsx3/espeak | ✅ Active |
-| **Speech-to-Text** | OpenAI Whisper (offline CPU) | Energy/RMS gate | ✅ Active |
-| **Cloud Vision** | Gemini 3.6 Flash / OpenAI API | YOLO-only perception | ✅ Active* |
+| **Cloud Vision** | Qwen3.8 27B Free (OpenRouter) | Gemini Flash Lite chain → YOLO | ✅ **Upgraded** |
 
-> \* Cloud VLM requires an API key in `.env`. Without it, the app uses YOLO-only signals — never blocked.
+> \* Cloud VLM: **Qwen3.8 27B Free** via OpenRouter is the **PRIMARY** vision-language model (`OPENROUTER_API_KEY`), with instant failover to **Google Gemini Flash Lite** (`GEMINI_API_KEY`). If all cloud providers fail or keys are absent, the system runs on local YOLO + InsightFace — never blocked. Note that free-tier model availability and rate limits can vary.
+
 
 <br/>
 

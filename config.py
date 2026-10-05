@@ -194,8 +194,9 @@ MOTION_WARMUP = 5            # seconds after boot before the first fire
 FACE_MODEL_NAME = "buffalo_l"     # InsightFace model pack (det + ArcFace)
 FACE_DET_SIZE = (640, 640)        # detector input size
 # Cosine similarity of normed embeddings is a dot product. Same-person pairs
-# usually score > 0.5, different people < 0.3, so 0.45 is a safe default to tune.
-FACE_MATCH_THRESHOLD = 0.45       # higher = stricter (fewer false accepts)
+# usually score > 0.5, different people < 0.3. 0.42 safely accommodates close-ups
+# and varied lighting without false accepts.
+FACE_MATCH_THRESHOLD = 0.42       # higher = stricter (fewer false accepts)
 FACE_MIN_DET_SCORE = 0.5          # ignore very low-confidence face detections
 FACE_CTX_ID = -1                  # -1 = CPU, 0 = first GPU
 
@@ -242,69 +243,50 @@ ANTISPOOF_BACKEND = "auto"
 # ---------------------------------------------------------------------------
 # VLM scene description + OCR (Phase 6 - cloud vision, OpenAI-compatible)
 # ---------------------------------------------------------------------------
-# For UNKNOWN visitors, one cloud call describes the scene for a blind listener
-# and transcribes any visible parcel-label text. KNOWN faces skip it entirely
-# (latency, cost, and privacy). If no keys are set or every key fails, the app
+# One cloud call describes the scene for a blind listener and transcribes any
+# visible parcel-label text. If no keys are set or every key fails, the app
 # runs on YOLO-only signals - it NEVER crashes and NEVER blocks the doorbell.
 #
-# API keys (comma-separated, tried in order with automatic failover) are read
-# from, in priority order:
-#   1. environment variable  OPENAI_API_KEY  (preferred)
-#   2. environment variable  GITHUB_MODELS_KEYS  (legacy, deprecated)
-#   3. VLM_API_KEYS below (leave "" - do NOT hardcode real keys)
-# Get an OpenAI API key from https://platform.openai.com/api-keys and set it
-# in .env. Multiple comma-separated keys enable automatic failover.
+# PRIMARY PROVIDER: OpenRouter / Qwen3.8 27B (free, fast, excellent vision).
+#   API key: set OPENROUTER_API_KEY in .env
+#   Model: configurable via OPENROUTER_MODEL env var (default qwen/qwen3.8-27b:free)
 #
+# FALLBACK PROVIDER: Gemini (tried automatically when OpenRouter fails).
+#   API key: set GEMINI_API_KEY in .env
+#   Model chain: gemini-3.6-flash → gemini-3.5-flash-lite → gemini-3.1-flash-lite
+#
+# If both providers fail, the pipeline runs on YOLO-only signals (never crashes).
+#
+
+# --- OpenRouter (PRIMARY VLM) ------------------------------------------------
+# Set OPENROUTER_API_KEY in .env. Do NOT hardcode real keys here.
+OPENROUTER_API_KEY = ""                       # keep empty; use .env instead
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "qwen/qwen3.8-27b:free")
+
+# --- Gemini (FALLBACK VLM) ---------------------------------------------------
 VLM_API_KEYS = ""                             # keep empty; use .env instead
-# OpenAI-compatible chat completions endpoint. Any provider that speaks the
-# same format works (Azure OpenAI, Groq, Together AI, local vLLM, etc.).
 VLM_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-VLM_MODEL = "gemini-3.6-flash"                 # Gemini vision model; fast,
-                                              #   excellent at image understanding,
-                                              #   no thinking overhead.
-VLM_TIMEOUT = 30                              # seconds per HTTP request (Phase 12:
-                                              #   lowered 20->12 so a slow/dead key
-                                              #   fails over fast and never stalls
-                                              #   the doorbell past the speed target)
-VLM_MAX_TOKENS = 300
-VLM_TEMPERATURE = 0.0                         # Phase 16: 0 = most factual/repeatable
-                                              #   (0.2 let clothing colours drift
-                                              #   between identical calls)
-VLM_ONLY_FOR_UNKNOWN = False                  # Phase 16: describe KNOWN people too
-                                              #   (name + clothing/carried/mood +
-                                              #   scene, never age/gender). Their
-                                              #   frame IS sent to the cloud VLM.
-                                              #   Set True to keep known faces off
-                                              #   the API (name-only announcements).
-VLM_COOLDOWN = 60                             # Minimum seconds between VLM calls
-                                              #   on the same pipeline run. Rapid
-                                              #   motion events are skipped until
-                                              #   the cooldown expires, preventing
-                                              #   Gemini free-tier 429 spam.
-# Phase 12 (SPEED): for an UNKNOWN visitor, SPEAK a FAST local announcement first
-# (InsightFace age/gender + YOLO carried objects + intent), then run the richer
+VLM_MODEL = "gemini-3.6-flash"                 # Gemini primary fallback model
+
+# --- Shared VLM settings -----------------------------------------------------
+# VLM_TIMEOUT_SECONDS env var overrides the default. Short timeouts ensure fast
+# failover: a slow/dead provider falls over quickly, never stalling the doorbell.
+VLM_TIMEOUT = int(os.environ.get("VLM_TIMEOUT_SECONDS", "8"))
+VLM_MAX_TOKENS = 1200
+VLM_TEMPERATURE = 0.0                         # 0 = most factual/repeatable
+VLM_ONLY_FOR_UNKNOWN = False                  # describe KNOWN people too
+VLM_COOLDOWN = 8                              # Minimum seconds between VLM calls (bypassed on scene change)
+# Phase 12 (SPEED): SPEAK a FAST local announcement first, then run the richer
 # VLM appearance call in a BACKGROUND thread and update the stored event +
-# dashboard + history when it returns (no re-speak). This makes the spoken
-# announcement land in ~2-3s even when the cloud call is slow; the doorbell is
-# NEVER blocked by the VLM. Set False to run the VLM inline (bounded by
-# VLM_TIMEOUT) and fold clothing/uniform into the FIRST spoken announcement.
+# dashboard + history when it returns. The doorbell is NEVER blocked by the VLM.
 VLM_ASYNC_ENRICH = True
-# Phase 12 (RICHNESS): when the background VLM enrich (above) returns, SPEAK the
-# details it just added - the appearance (clothing/uniform) + scene sentences - as
-# a short follow-up utterance, so a Blind user actually HEARS the full description
-# instead of only the fast first line. Only the newly-added delta is spoken (never
-# the whole announcement again), and only in blind/both mode. Set False to keep the
-# enrichment silent (screen-only update). Ignored when VLM_ASYNC_ENRICH is False
-# (there the full description is already in the first spoken announcement).
+# Phase 12 (RICHNESS): when the background VLM enrich returns, SPEAK the details
+# as a short follow-up utterance. Only in blind/both mode.
 VLM_ENRICH_SPEAK = True
-# Phase 12 (RICHNESS, follow-up mode): when True, the background-enrich follow-up
-# speaks the WHOLE recomposed announcement ("An unknown man is at the door.
-# [appearance]. [scene].") instead of only the newly-added delta, so a Blind user
-# hears the complete description in one utterance. The trade-off is that the "who"
-# opening line is heard twice (once instantly, once in the full follow-up); the
-# instant first line is never suppressed by the announcement cooldown. Set False to
-# fall back to delta-only follow-up. Ignored when VLM_ENRICH_SPEAK is False.
-VLM_ENRICH_SPEAK_FULL = True
+# Follow-up mode: speak delta-only (the full visual scene description)
+# rather than repeating the instant opening announcement twice.
+VLM_ENRICH_SPEAK_FULL = False
 VLM_JPEG_QUALITY = 80                         # frame is re-encoded before upload
 VLM_MAX_IMAGE_WIDTH = 768                     # downscale wide frames to save tokens
 
@@ -359,42 +341,64 @@ VISITOR_LISTEN_SECONDS = 6
 # USER_LANGUAGE (defined in the Accessibility section above) is the target code.
 #
 # Backend priority (all behind the SAME TranslateModule interface):
-#   "github" -> PREFERRED, torch-safe. Reuses the Phase-6 VLM keys +
-#               failover for a text-only translation call. Adds NO dependency and
-#               NEVER moves torch. Needs network + keys; degrades to passthrough.
-#   "groq"   -> Groq cloud LLM (llama-3.1-8b-instant). Free tier, fast, torch-free.
-#               Set GROQ_API_KEY in .env. Degrades to passthrough if missing.
+#   "auto"   -> PREFERRED: tries fast Groq LLM (20ms, multilingual) if keys
+#               present in .env, with automatic failover to VLM / passthrough.
+#   "groq"   -> Groq cloud LLM (qwen/qwen3.8-27b). Free tier, ultra-fast, torch-free.
+#   "github" -> VLM chat completion. Adds NO dependency, never moves torch.
 #   "none"   -> passthrough: return the original text unchanged (honest fallback).
-TRANSLATE_BACKEND = "github"
+TRANSLATE_BACKEND = "auto"
 # ISO code -> human name, used both in the translation prompt and the UI selector.
 LANGUAGE_NAMES = {
     "en": "English", "hi": "Hindi", "ml": "Malayalam", "ta": "Tamil",
     "te": "Telugu", "kn": "Kannada", "bn": "Bengali", "mr": "Marathi",
     "gu": "Gujarati", "pa": "Punjabi", "ur": "Urdu",
+    "es": "Spanish", "fr": "French", "de": "German", "it": "Italian",
+    "ar": "Arabic", "ja": "Japanese", "zh": "Chinese",
 }
-# When True, translate the WHOLE announcement into USER_LANGUAGE (and re-speak it),
-# not just the visitor's transcript. Default False to avoid double-speaking; the
-# 'They said: "..."' clause is already translated via translated_transcript.
-TRANSLATE_ANNOUNCEMENT = False
+# When True (or when USER_LANGUAGE != "en"), translate the announcement into
+# USER_LANGUAGE so the blind/deaf user hears and sees the entire message in
+# their native language with a natural human accent.
+TRANSLATE_ANNOUNCEMENT = True
 
-# Phase 17: per-language ANNOUNCEMENT voices. When a non-English sentence is
-# spoken (the translated announcement above, or any speak_text with a lang
-# hint), the TTS worker picks the matching edge-tts neural voice below instead
-# of reading Malayalam/Hindi text with the English Kokoro voice. Offline or
-# missing language -> the normal Kokoro/edge/pyttsx3 cascade still speaks, so
-# nothing is ever silent. (Kokoro itself has hi/zh/ja phonemes only, so Indic
-# coverage comes from edge-tts - online, like translation itself.)
+# Per-language ANNOUNCEMENT voices. When a non-English sentence is spoken,
+# the TTS worker picks the matching Microsoft Edge Neural voice below instead
+# of reading foreign text with English phonemes. Edge Neural voices feature
+# authentic native accents, natural human cadence, and realistic intonation.
 LANGUAGE_VOICES = {
     "hi": "hi-IN-SwaraNeural",
+    "hi-in": "hi-IN-SwaraNeural",
     "ml": "ml-IN-SobhanaNeural",
+    "ml-in": "ml-IN-SobhanaNeural",
     "ta": "ta-IN-PallaviNeural",
+    "ta-in": "ta-IN-PallaviNeural",
     "te": "te-IN-ShrutiNeural",
+    "te-in": "te-IN-ShrutiNeural",
     "kn": "kn-IN-SapnaNeural",
+    "kn-in": "kn-IN-SapnaNeural",
     "bn": "bn-IN-TanishaaNeural",
+    "bn-in": "bn-IN-TanishaaNeural",
     "mr": "mr-IN-AarohiNeural",
+    "mr-in": "mr-IN-AarohiNeural",
     "gu": "gu-IN-DhwaniNeural",
+    "gu-in": "gu-IN-DhwaniNeural",
     "pa": "pa-IN-OjasNeural",
+    "pa-in": "pa-IN-OjasNeural",
     "ur": "ur-IN-GulNeural",
+    "ur-in": "ur-IN-GulNeural",
+    "es": "es-ES-ElviraNeural",
+    "es-es": "es-ES-ElviraNeural",
+    "fr": "fr-FR-DeniseNeural",
+    "fr-fr": "fr-FR-DeniseNeural",
+    "de": "de-DE-KatjaNeural",
+    "de-de": "de-DE-KatjaNeural",
+    "it": "it-IT-ElsaNeural",
+    "it-it": "it-IT-ElsaNeural",
+    "ar": "ar-SA-ZariyahNeural",
+    "ar-sa": "ar-SA-ZariyahNeural",
+    "ja": "ja-JP-NanamiNeural",
+    "ja-jp": "ja-JP-NanamiNeural",
+    "zh": "zh-CN-XiaoxiaoNeural",
+    "zh-cn": "zh-CN-XiaoxiaoNeural",
 }
 
 # ---------------------------------------------------------------------------
@@ -492,10 +496,10 @@ AUTOENROLL_SUGGEST_AFTER = 5   # cluster size that triggers a "save this?" promp
 # push-to-talk still works - the app never crashes.
 WAKEWORD_MODEL_DIR = os.path.join(BASE_DIR, "models", "wakeword")
 WAKEWORD_MODEL = "hey_jarvis"     # pretrained FALLBACK phrase (used only when no custom .onnx exists)
-WAKEWORD_THRESHOLD = 0.5          # 0-1 detection score; RAISE to reduce false wakes
-WAKEWORD_COMMAND_SECONDS = 4      # seconds of command audio captured after a wake
+WAKEWORD_THRESHOLD = 0.40         # 0-1 detection score; 0.40 gives high sensitivity with low false alarm rate
+WAKEWORD_COMMAND_SECONDS = 4.5    # seconds ceiling for command capture (VAD stops early on 0.7s silence)
 WAKEWORD_ALWAYS_ON = True         # start the always-listening mic at boot ("hey access"); toggle off in the dashboard
-WAKEWORD_COOLDOWN = 6             # min seconds between two wake detections (debounce)
+WAKEWORD_COOLDOWN = 3.5           # min seconds between two wake detections (debounce)
 WAKEWORD_INFERENCE_FRAMEWORK = "onnx"  # openWakeWord backend: "onnx" (installed) | "tflite"
 
 # ---------------------------------------------------------------------------
@@ -557,23 +561,32 @@ VIDEO_MIN_EVENT_SEC = 1.0           # minimum event length to save a clip
 VIDEO_RETAIN_DAYS   = 7             # auto-delete clips older than N days
 VIDEO_MAX_CLIPS     = 500           # hard cap on total saved clips
 
-# ── Phase 18: VLM Multi-Model Fallback ───────────────────────────────────────
-# When the primary VLM_MODEL hits quota/503, AccessAI tries each model below
-# in order. All use the same GEMINI_API_KEY and base URL — they have
-# independent quota pools so a rate-limited main model falls over instantly.
+# ── Phase 19: Best-Frame Selector (motion → observation → best frame) ────────
+# When motion is confirmed the selector captures frames for up to WINDOW_SEC
+# seconds at SAMPLE_FPS, scores each on sharpness/person/face/exposure/stability
+# and picks the single best frame for the expensive AI pipeline.  If no frame
+# passes MIN_QUALITY the motion event is silently discarded.
+FRAME_SELECT_WINDOW_SEC       = 2.5     # max observation window (seconds)
+FRAME_SELECT_SAMPLE_FPS       = 10.0    # capture rate inside the window
+FRAME_SELECT_MIN_SHARPNESS    = 50.0    # Laplacian variance floor
+FRAME_SELECT_MIN_PERSON_CONF  = 0.35    # YOLO person-detection conf floor
+FRAME_SELECT_MIN_FACE_CONF    = 0.3     # face-detection conf floor
+FRAME_SELECT_MIN_EXPOSURE     = 30      # mean pixel value floor (reject dark)
+FRAME_SELECT_MAX_EXPOSURE     = 230     # mean pixel value ceiling (reject bright)
+FRAME_SELECT_STABILITY_WINDOW = 0.5     # seconds person must be ~stable for early exit
+FRAME_SELECT_MIN_QUALITY      = 0.3     # composite score floor to accept a frame
+FRAME_SELECT_EARLY_EXIT       = 0.75    # composite score to trigger early exit
+
+# ── VLM Multi-Model Fallback ─────────────────────────────────────────────────
+# Gemini fallback models (tried after primary OpenRouter/Qwen fails).
+# All use the same GEMINI_API_KEY and base URL — they have independent quota
+# pools so a rate-limited main model falls over instantly.
 VLM_FALLBACK_MODELS = [
     "gemini-3.5-flash-lite",     # ✅ tested working, separate quota
     "gemini-3.1-flash-lite",     # ✅ tested working, separate quota
     "gemini-flash-lite-latest",  # ✅ tested working, always latest lite
 ]
 
-# For completely different API providers (OpenRouter, Together, etc.)
-# Add entries here as: {"base_url": "...", "model": "...", "keys": "key1,key2"}
-VLM_EXTRA_PROVIDERS = [
-    # Example (add your OpenRouter key to .env as OPENROUTER_API_KEY):
-    # {
-    #     "base_url": "https://openrouter.ai/api/v1",
-    #     "model": "google/gemini-flash-1.5",
-    #     "keys": os.environ.get("OPENROUTER_API_KEY", ""),
-    # },
-]
+# Gemini is now assembled as an extra_provider at runtime in run.py.
+# VLM_EXTRA_PROVIDERS is kept for additional custom providers if needed.
+VLM_EXTRA_PROVIDERS = []

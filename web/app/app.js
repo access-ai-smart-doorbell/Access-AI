@@ -734,18 +734,19 @@ $("alert-close").addEventListener("click", hideAlert);
 /* =====================================================================
  * Phone-side speech (Blind/Both) — Kokoro via /speak_audio, else browser
  * ===================================================================== */
-async function phoneSpeak(text, force) {
+async function phoneSpeak(text, force, lang) {
   text = (text || "").trim();
   if (!text) return;
   if (!force && !(currentMode === "blind" || currentMode === "both")) return;
-  // Preferred: natural Kokoro voice synthesized server-side.
+  // Preferred: natural neural voice synthesized server-side.
   try {
-    const r = await apiFetch(`/speak_audio?text=${encodeURIComponent(text)}`);
+    const l = lang ? `&lang=${encodeURIComponent(lang)}` : "";
+    const r = await apiFetch(`/speak_audio?text=${encodeURIComponent(text)}${l}`);
     if (r.ok) {
       const blob = await r.blob();
       speakAudioEl.src = URL.createObjectURL(blob);
       await speakAudioEl.play();
-      lastSpeechPath = "kokoro";
+      lastSpeechPath = "neural";
       return;
     }
   } catch { /* fall through to the browser voice */ }

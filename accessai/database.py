@@ -18,8 +18,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, Mapped, mapped_column
 
-from .visitor_event import (VisitorEvent, Identity, DetectedObject,
-                            people_to_dicts, alert_kind)
+from .visitor_event import VisitorEvent, people_to_dicts, alert_kind
 
 Base = declarative_base()
 
@@ -76,6 +75,11 @@ class EventRow(Base):
 
     # Storage
     snapshot_path: Mapped[str] = mapped_column(Text, default="")
+    video_path: Mapped[str] = mapped_column(Text, default="")    # Phase 19
+
+
+def _utc_now() -> _dt.datetime:
+    return _dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None)
 
 
 class KnownFaceRow(Base):
@@ -84,7 +88,7 @@ class KnownFaceRow(Base):
     name: Mapped[str] = mapped_column(String(128), index=True)
     source_path: Mapped[str] = mapped_column(Text, default="")
     embedding: Mapped[bytes] = mapped_column(LargeBinary, nullable=True)
-    created_at: Mapped[_dt.datetime] = mapped_column(DateTime, default=_dt.datetime.utcnow)
+    created_at: Mapped[_dt.datetime] = mapped_column(DateTime, default=_utc_now)
 
 
 class ReidRow(Base):
@@ -92,7 +96,7 @@ class ReidRow(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     reid_id: Mapped[str] = mapped_column(String(64), index=True)
     embedding: Mapped[bytes] = mapped_column(LargeBinary, nullable=True)
-    last_seen: Mapped[_dt.datetime] = mapped_column(DateTime, default=_dt.datetime.utcnow)
+    last_seen: Mapped[_dt.datetime] = mapped_column(DateTime, default=_utc_now)
     seen_count: Mapped[int] = mapped_column(Integer, default=1)
 
 
@@ -102,7 +106,7 @@ class UnknownClusterRow(Base):
     cluster_id: Mapped[str] = mapped_column(String(64), index=True)
     embedding: Mapped[bytes] = mapped_column(LargeBinary, nullable=True)
     event_id: Mapped[str] = mapped_column(String(64), default="")
-    created_at: Mapped[_dt.datetime] = mapped_column(DateTime, default=_dt.datetime.utcnow)
+    created_at: Mapped[_dt.datetime] = mapped_column(DateTime, default=_utc_now)
     suggested: Mapped[int] = mapped_column(Integer, default=0)
 
 
@@ -118,8 +122,8 @@ class PushTokenRow(Base):
     token: Mapped[str] = mapped_column(Text, unique=True, index=True)
     platform: Mapped[str] = mapped_column(String(16), default="web")
     mode: Mapped[str] = mapped_column(String(16), default="both")
-    created_at: Mapped[_dt.datetime] = mapped_column(DateTime, default=_dt.datetime.utcnow)
-    last_seen: Mapped[_dt.datetime] = mapped_column(DateTime, default=_dt.datetime.utcnow)
+    created_at: Mapped[_dt.datetime] = mapped_column(DateTime, default=_utc_now)
+    last_seen: Mapped[_dt.datetime] = mapped_column(DateTime, default=_utc_now)
 
 
 Index("ix_events_timestamp", EventRow.timestamp)
@@ -158,13 +162,13 @@ class Database:
 
     def _ensure_columns(self) -> None:
         """Add Phase-12 columns to an existing `events` table if they're missing."""
-        from sqlalchemy import text
         wanted = {
             "age": "INTEGER",
             "gender": "VARCHAR(16) DEFAULT ''",
             "appearance": "TEXT DEFAULT ''",
             "people": "TEXT DEFAULT '[]'",                 # Phase 15
             "extra_unknown": "INTEGER DEFAULT 0",          # Phase 15
+            "video_path": "TEXT DEFAULT ''",               # Phase 19
         }
         try:
             with self.engine.begin() as conn:
@@ -207,6 +211,7 @@ class Database:
             confidence=float(ev.confidence),
             announcement_text=ev.announcement_text,
             snapshot_path=ev.snapshot_path,
+            video_path=getattr(ev, 'video_path', '') or '',
         )
         with self.Session() as s:
             s.add(row)
@@ -288,6 +293,7 @@ class Database:
         "scene_summary", "ocr_text", "speech_transcript", "language_detected",
         "translated_transcript", "intent", "confidence", "announcement_text",
         "age", "gender", "appearance", "visitor_count", "people", "extra_unknown",
+        "video_path",                                       # Phase 19
     }
 
     def update_event_fields(self, event_id: str, **fields) -> Optional[dict]:
@@ -383,7 +389,7 @@ class Database:
             if row is not None:
                 row.platform = platform or row.platform
                 row.mode = mode or row.mode
-                row.last_seen = _dt.datetime.utcnow()
+                row.last_seen = _utc_now()
                 s.commit()
                 return False
             s.add(PushTokenRow(token=token, platform=platform or "web",
@@ -521,6 +527,12 @@ class Database:
             "confidence": r.confidence,
             "announcement_text": r.announcement_text,
             "snapshot_path": r.snapshot_path,
+            "video_path": getattr(r, 'video_path', '') or '',
+            "status": "analyzed" if (r.scene_summary or "").strip() else "detected",
+            "person_count": r.visitor_count,
+            "identity_status": "known" if bool(r.identity_known) else "unknown",
+            "scene_description": r.scene_summary or "",
+            "snapshot": f"/snapshot/{r.event_id}.jpg",
         }
         d["alert_kind"] = alert_kind(d)
         return d
@@ -537,11 +549,11 @@ def _safe_json_list(s: str) -> list:
 def _parse_iso(s: str) -> _dt.datetime:
     """Parse an ISO timestamp (the event's own clock) to a naive datetime.
 
-    Falls back to utcnow() on empty/garbage input so recency math never crashes.
+    Falls back to _utc_now() on empty/garbage input so recency math never crashes.
     Using the event's clock consistently (store + compare) avoids local-vs-UTC
     skew in the Re-ID TTL window.
     """
     try:
-        return _dt.datetime.fromisoformat(s) if s else _dt.datetime.utcnow()
+        return _dt.datetime.fromisoformat(s) if s else _utc_now()
     except Exception:
-        return _dt.datetime.utcnow()
+        return _utc_now()

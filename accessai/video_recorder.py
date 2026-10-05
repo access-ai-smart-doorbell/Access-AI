@@ -31,7 +31,6 @@ the module logs a warning and is silently disabled.  The rest of the
 pipeline is unaffected.
 """
 
-import os
 import json
 import queue
 import threading
@@ -107,6 +106,7 @@ class EventVideoRecorder:
         self._person_present = False
         self._person_gone_at: float = 0.0
         self._event_start: float = 0.0
+        self._current_clip_filename: str = ""   # Phase 19: last/current clip name
 
         # Frame size, filled on first push_frame call.
         self._frame_h: int = 0
@@ -173,6 +173,13 @@ class EventVideoRecorder:
             preroll = list(self._ring)  # snapshot pre-roll frames
 
         # Send pre-roll frames to writer (outside lock to keep it short)
+        # Phase 19: use event_id for the clip filename when available.
+        clip_event_id = event_meta.get("event_id", "")
+        if clip_event_id:
+            try:
+                self._write_q.put_nowait(("set_event_id", clip_event_id))
+            except queue.Full:
+                pass
         for f in preroll:
             try:
                 self._write_q.put_nowait(("frame", f))
@@ -197,6 +204,32 @@ class EventVideoRecorder:
 
     def available(self) -> bool:
         return self._enabled
+
+    def get_current_clip_filename(self) -> str:
+        """Return the filename (not full path) of the clip currently being
+        recorded, or the most recently finished clip.  Empty if none."""
+        return self._current_clip_filename
+
+    def get_clip_for_event(self, event_id: str) -> str:
+        """Look up a clip filename by event_id.  Checks the JSON metadata
+        files on disk.  Returns the MP4 filename or empty string."""
+        if not self._enabled:
+            return ""
+        try:
+            for meta_path in self._clips_dir.glob("*.json"):
+                try:
+                    meta = json.loads(meta_path.read_text())
+                    if meta.get("event_id") == event_id:
+                        video = meta.get("video", "")
+                        if video:
+                            mp4 = self._clips_dir / video
+                            if mp4.exists():
+                                return video
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return ""
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -235,11 +268,17 @@ class EventVideoRecorder:
         """Background thread: owns the VideoWriter and all disk I/O."""
         writer = None
         out_path = None
+        pending_event_id = ""
 
         while True:
             try:
                 cmd, payload = self._write_q.get(timeout=1.0)
             except queue.Empty:
+                continue
+
+            if cmd == "set_event_id":
+                # Phase 19: store the event_id to use for the next clip name.
+                pending_event_id = payload
                 continue
 
             if cmd == "frame":
@@ -249,7 +288,13 @@ class EventVideoRecorder:
                     # the actual frame dimensions.
                     h, w = frame.shape[:2]
                     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                    out_path = self._clips_dir / f"event_{ts}.mp4"
+                    # Phase 19: prefer event_id for the filename so clips are
+                    # easily matched to VisitorEvents.
+                    if pending_event_id:
+                        out_path = self._clips_dir / f"{pending_event_id}.mp4"
+                    else:
+                        out_path = self._clips_dir / f"event_{ts}.mp4"
+                    self._current_clip_filename = out_path.name
                     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
                     writer = cv2.VideoWriter(str(out_path), fourcc,
                                             self._fps, (w, h))
@@ -257,6 +302,7 @@ class EventVideoRecorder:
                         logger.warning("[VideoRecorder] VideoWriter failed to open.")
                         writer = None
                         out_path = None
+                    pending_event_id = ""
                 if writer is not None:
                     writer.write(frame)
 

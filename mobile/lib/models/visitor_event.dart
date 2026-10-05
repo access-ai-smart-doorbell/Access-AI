@@ -92,6 +92,9 @@ class VisitorEvent {
   final String intent;
   final String announcementText;
 
+  /// Event lifecycle status: "detected" (instant local) -> "analyzed" (VLM complete).
+  final String status;
+
   /// Server-derived alert taxonomy (Phase 17): spoof | known | delivery |
   /// unknown. Keys the vibration pattern / earcon / notification urgency.
   final String alertKind;
@@ -122,26 +125,41 @@ class VisitorEvent {
     required this.reidSeenCount,
     required this.intent,
     required this.announcementText,
+    this.status = 'detected',
     this.alertKind = '',
   });
 
   factory VisitorEvent.fromJson(Map<String, dynamic> j) {
-    final identity = asMap(j['identity']);
+    final rawIdentity = j['identity'];
+    final identityMap = asMap(rawIdentity);
+    final String name = rawIdentity is String && rawIdentity.isNotEmpty
+        ? rawIdentity
+        : asStr(identityMap['name'], 'Unknown');
+    final bool known = j.containsKey('identity_status')
+        ? (asStr(j['identity_status']) == 'known')
+        : asBool(identityMap['known']);
+    final int visitorCount = j.containsKey('person_count')
+        ? asInt(j['person_count'])
+        : asInt(j['visitor_count']);
+    final String sceneSummary = asStr(j['scene_summary']).isNotEmpty
+        ? asStr(j['scene_summary'])
+        : asStr(j['scene_description']);
+    final String status = asStr(j['status'], 'detected');
     final people = asMapList(j['people']).map(Person.fromJson).toList();
     return VisitorEvent(
       eventId: asStr(j['event_id']),
       timestamp: asStr(j['timestamp']),
       trigger: asStr(j['trigger'], 'manual'),
-      known: asBool(identity['known']),
-      name: asStr(identity['name'], 'Unknown'),
-      identityConfidence: asDouble(identity['confidence']),
+      known: known,
+      name: name,
+      identityConfidence: asDouble(identityMap['confidence']),
       isSpoof: asBool(j['is_spoof']),
       spoofScore: asDouble(j['spoof_score'], 1.0),
       people: people,
       extraUnknown: asInt(j['extra_unknown']),
-      visitorCount: asInt(j['visitor_count']),
+      visitorCount: visitorCount,
       carriedObjects: asStrList(j['carried_objects']),
-      sceneSummary: asStr(j['scene_summary']),
+      sceneSummary: sceneSummary,
       hazards: asStr(j['hazards'], 'none'),
       ocrText: asStr(j['ocr_text']),
       age: asIntOrNull(j['age']),
@@ -154,6 +172,7 @@ class VisitorEvent {
       reidSeenCount: asInt(j['reid_seen_count']),
       intent: asStr(j['intent'], 'unknown visitor'),
       announcementText: asStr(j['announcement_text']),
+      status: status,
       alertKind: asStr(j['alert_kind']),
     );
   }

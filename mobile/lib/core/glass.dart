@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:math' as math;
-import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -9,20 +8,21 @@ import 'package:sensors_plus/sensors_plus.dart';
 import 'motion.dart';
 import 'tokens.dart';
 
-/// Liquid-glass surface: a real BackdropFilter blur under a translucent
-/// gradient fill, wrapped in a 1px *specular* gradient border (bright at the
-/// top-left where the "light" hits, fading away) and a soft depth shadow.
+/// Soft card surface: a white card with subtle shadow, soft border, and
+/// generous rounded corners. The premium accessible card treatment from
+/// the reference design. No blur / heavy glass — just a clean, elevated
+/// white surface on the light blue-gray background.
 ///
 /// Tappable cards press down (scale 0.97 on the expo curve) with a selection
-/// haptic — the signature tactile feel of the app. Pass [semanticLabel] to
-/// expose a tappable card as a button to screen readers.
+/// haptic. Pass [semanticLabel] to expose a tappable card as a button to
+/// screen readers.
 class GlassCard extends StatefulWidget {
   const GlassCard({
     super.key,
     required this.child,
     this.padding = const EdgeInsets.all(T.s16),
-    this.radius = T.rMd,
-    this.blur = 20,
+    this.radius = T.rLg,
+    this.blur = 0,
     this.onTap,
     this.onLongPress,
     this.tint,
@@ -38,14 +38,13 @@ class GlassCard extends StatefulWidget {
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
 
-  /// Glass body tint. Defaults to the theme's surfaceContainer (deep navy).
+  /// Card background colour. Defaults to white.
   final Color? tint;
 
-  /// Specular edge + glow colour. Defaults to white light.
+  /// Border accent colour. Defaults to the standard light border.
   final Color? borderTint;
 
-  /// When true the card emits a soft coloured glow (borderTint / primary)
-  /// instead of a plain depth shadow — used for "live" or highlighted cards.
+  /// When true the card emits a soft coloured glow instead of a plain shadow.
   final bool glow;
 
   final String? semanticLabel;
@@ -63,75 +62,41 @@ class _GlassCardState extends State<GlassCard> {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final highContrast = cs.outline == Colors.white ||
-        cs.outline.toARGB32() == 0xFFFFFFFF;
-    final base = widget.tint ?? cs.surfaceContainer;
-    final edge = widget.borderTint ?? Colors.white;
+    final base = widget.tint ?? T.bgCard;
+    final edge = widget.borderTint ?? T.border;
     final r = BorderRadius.circular(widget.radius);
 
-    // Inner glass: blur + translucent top-lit gradient fill.
-    final Widget glass = ClipRRect(
-      borderRadius: r,
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: widget.blur, sigmaY: widget.blur),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            borderRadius: r,
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                base.withValues(alpha: highContrast ? 1.0 : 0.62),
-                base.withValues(alpha: highContrast ? 1.0 : 0.38),
-              ],
-            ),
-          ),
-          child: Padding(padding: widget.padding, child: widget.child),
-        ),
-      ),
-    );
-
-    // Specular 1px gradient border + depth shadow / glow.
-    final Widget bordered = Container(
+    final Widget card = Container(
       decoration: BoxDecoration(
         borderRadius: r,
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: highContrast
-              ? [cs.outline, cs.outline]
-              : [
-                  edge.withValues(alpha: 0.28),
-                  edge.withValues(alpha: 0.06),
-                  edge.withValues(alpha: 0.0),
-                ],
-          stops: highContrast ? const [0, 1] : const [0.0, 0.45, 1.0],
+        color: base,
+        border: Border.all(
+          color: edge.withValues(alpha: widget.borderTint != null ? 0.4 : 1.0),
+          width: 1,
         ),
-        boxShadow: highContrast
-            ? null
-            : [
-                if (widget.glow)
-                  BoxShadow(
-                    color: (widget.borderTint ?? cs.primary)
-                        .withValues(alpha: 0.30),
-                    blurRadius: 32,
-                    spreadRadius: -4,
-                  )
-                else
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.35),
-                    blurRadius: 24,
-                    offset: const Offset(0, 10),
-                    spreadRadius: -8,
-                  ),
-              ],
+        boxShadow: [
+          if (widget.glow && widget.borderTint != null)
+            BoxShadow(
+              color: widget.borderTint!.withValues(alpha: 0.15),
+              blurRadius: 20,
+              spreadRadius: -2,
+            )
+          else
+            BoxShadow(
+              color: T.shadow,
+              blurRadius: 16,
+              offset: const Offset(0, 4),
+              spreadRadius: -2,
+            ),
+        ],
       ),
-      padding: EdgeInsets.all(highContrast ? 2 : 1),
-      child: glass,
+      child: ClipRRect(
+        borderRadius: r,
+        child: Padding(padding: widget.padding, child: widget.child),
+      ),
     );
 
-    if (widget.onTap == null && widget.onLongPress == null) return bordered;
+    if (widget.onTap == null && widget.onLongPress == null) return card;
 
     Widget pressable = GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -147,7 +112,7 @@ class _GlassCardState extends State<GlassCard> {
         scale: _down ? 0.97 : 1.0,
         duration: Motion.duration(context, T.fast),
         curve: Motion.curve(context),
-        child: bordered,
+        child: card,
       ),
     );
     if (widget.semanticLabel != null) {
@@ -161,10 +126,8 @@ class _GlassCardState extends State<GlassCard> {
   }
 }
 
-/// The ambient "cinema" backdrop behind every screen: three soft aurora light
-/// blobs (green / cyan / indigo) drifting slowly across a deep navy canvas.
-/// When motion is reduced (or [animate] is false) the blobs hold still —
-/// identical look, zero movement. Cheap: three radial gradients, no blur.
+/// The ambient background behind every screen: a subtle blue-gray gradient
+/// with soft atmospheric blue blobs. Bright and airy, matching the reference.
 class GradientMesh extends StatefulWidget {
   const GradientMesh({super.key, this.animate = true});
 
@@ -196,53 +159,52 @@ class _GradientMeshState extends State<GradientMesh>
 
   @override
   Widget build(BuildContext context) {
-    final dark = Theme.of(context).brightness == Brightness.dark;
     final still = !widget.animate || context.reduceMotion;
     _sync(still);
     final c = _c;
-    if (still || c == null) return _paint(0, dark);
+    if (still || c == null) return _paint(0);
     return AnimatedBuilder(
       animation: c,
-      builder: (context, _) => _paint(c.value, dark),
+      builder: (context, _) => _paint(c.value),
     );
   }
 
-  Widget _paint(double t, bool dark) {
+  Widget _paint(double t) {
     final a = t * 2 * math.pi;
     Alignment orbit(double phase, double rx, double ry) =>
         Alignment(rx * math.cos(a + phase), ry * math.sin(a + phase));
 
-    final strength = dark ? 1.0 : 0.55;
     return DecoratedBox(
-      decoration: BoxDecoration(
+      decoration: const BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: dark
-              ? const [T.bg2, T.bg]
-              : const [Color(0xFFF1F5F9), Color(0xFFE2E8F0)],
+          colors: [
+            Color(0xFFF0F5FF),  // very light blue top
+            T.bg,               // light gray-blue
+          ],
         ),
       ),
       child: Stack(
         fit: StackFit.expand,
         children: [
           _Blob(
-            color: T.mesh2,
-            alignment: orbit(0.4, 0.9, 0.7) + const Alignment(-0.4, -0.5),
-            size: 1.3,
-            opacity: 0.16 * strength,
+            color: T.primary,
+            alignment: orbit(0.4, 0.9, 0.7) + const Alignment(-0.4, -0.6),
+            size: 1.2,
+            opacity: 0.04,
           ),
           _Blob(
-            color: T.mesh3,
-            alignment: orbit(2.5, 0.7, 0.9) + const Alignment(0.6, 0.2),
-            size: 1.1,
-            opacity: 0.14 * strength,
-          ),
-          _Blob(
-            color: T.mesh1,
-            alignment: orbit(4.6, 0.8, 0.6) + const Alignment(-0.2, 0.8),
+            color: const Color(0xFF818CF8),
+            alignment: orbit(2.5, 0.7, 0.9) + const Alignment(0.6, 0.3),
             size: 1.0,
-            opacity: 0.10 * strength,
+            opacity: 0.03,
+          ),
+          _Blob(
+            color: T.primary,
+            alignment: orbit(4.6, 0.8, 0.6) + const Alignment(-0.2, 0.8),
+            size: 0.9,
+            opacity: 0.03,
           ),
         ],
       ),
@@ -346,10 +308,9 @@ class _ParallaxTiltState extends State<ParallaxTilt> {
   }
 }
 
-/// A breathing aurora ring — the Jarvis identity mark. Used behind the mic
-/// button and in the wake-word UI: a conic cyan→indigo→violet sweep that
-/// slowly rotates and gently scales ("breathes"). [active] speeds it up and
-/// brightens it (listening); reduce-motion renders it as a still ring.
+/// A breathing aurora ring — used behind the doorbell hero. Now renders
+/// as a soft amber/gold glow ring to match the reference design's warm
+/// doorbell visualisation. [active] speeds it up and brightens it.
 class AuroraRing extends StatefulWidget {
   const AuroraRing({
     super.key,
@@ -449,13 +410,14 @@ class _AuroraRingPainter extends CustomPainter {
     final radius =
         (math.min(size.width, size.height) / 2 - thickness) * breathe;
     final rect = Rect.fromCircle(center: center, radius: radius);
+    // Warm amber/gold glow matching reference doorbell visualization
     final sweep = SweepGradient(
       transform: GradientRotation(turn * 2 * math.pi),
       colors: [
-        T.jarvis1.withValues(alpha: opacity),
-        T.jarvis2.withValues(alpha: opacity),
-        T.jarvis3.withValues(alpha: opacity),
-        T.jarvis1.withValues(alpha: opacity),
+        T.accent.withValues(alpha: opacity * 0.6),
+        const Color(0xFFFBBF24).withValues(alpha: opacity * 0.4),
+        T.accent.withValues(alpha: opacity * 0.3),
+        T.accent.withValues(alpha: opacity * 0.6),
       ],
     );
     // Soft outer glow.

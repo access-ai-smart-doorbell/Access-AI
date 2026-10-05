@@ -74,7 +74,7 @@ python-dotenv==1.0.1
 # NOTE: openai-whisper is an sdist whose setup.py imports pkg_resources; on a
 # stripped setuptools install it needs setuptools<81 present, e.g.:
 #   pip install "setuptools<81" && pip install --no-build-isolation openai-whisper==20231117
-openai-whisper==20231117
+openai-whisper
 sounddevice==0.4.7
 silero-vad==5.1        # if this errors, load silero via torch.hub in code instead
 
@@ -103,10 +103,9 @@ scikit-learn==1.9.0
 # capture/announce stack. Always-on listening is OPT-IN (WAKEWORD_ALWAYS_ON);
 # push-to-talk (/listen + dashboard button) always works without it.
 #   System lib for the live mic:  sudo apt install -y libportaudio2
-openwakeword==0.6.0
+# openwakeword==0.6.0  # (install with --no-deps, see scripts/install_deps.sh)
 
 # --- Natural human-like TTS (Phase 11) ---
-# TORCH SAFETY: this phase replaces the robotic espeak/pyttsx3 voice WITHOUT
 # touching the pinned torch 2.4.1. That is exactly why we use the ONNX build:
 #   * kokoro-onnx  -> runs Kokoro through the EXISTING onnxruntime (a Phase-2
 #                     dep). It does NOT depend on torch. The STANDARD `kokoro`

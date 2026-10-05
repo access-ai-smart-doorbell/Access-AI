@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -16,12 +14,10 @@ import 'live_screen.dart';
 import 'people_screen.dart';
 import 'settings_screen.dart';
 
-/// The app's home scaffold: a floating liquid-glass bottom navigation bar over
-/// the five primary screens, kept alive with an IndexedStack so state (scroll,
-/// live stream) survives tab switches. It also hosts the ALWAYS-ON live-alert
-/// listener — while the user is anywhere in the shell (or a screen pushed
-/// above it), an incoming doorbell event plays the doorbell earcon and
-/// triggers the full-screen [DoorbellAlert].
+/// The app's home scaffold: a clean white bottom navigation bar with five tabs.
+/// Matches the reference design: simple outlined Material icons, selected tab
+/// has a soft blue pill background with blue icon/text, unselected tabs are
+/// gray. It also hosts the ALWAYS-ON live-alert listener.
 class NavShell extends ConsumerStatefulWidget {
   const NavShell({super.key});
 
@@ -67,10 +63,10 @@ class _NavShellState extends ConsumerState<NavShell> with WidgetsBindingObserver
   }
 
   static const _destinations = [
-    (icon: Icons.doorbell_outlined, active: Icons.doorbell, label: 'Door'),
+    (icon: Icons.home_outlined, active: Icons.home, label: 'Door'),
     (icon: Icons.videocam_outlined, active: Icons.videocam, label: 'Live'),
-    (icon: Icons.history_outlined, active: Icons.history, label: 'History'),
-    (icon: Icons.groups_outlined, active: Icons.groups, label: 'People'),
+    (icon: Icons.access_time, active: Icons.access_time_filled, label: 'History'),
+    (icon: Icons.person_outline, active: Icons.person, label: 'People'),
     (icon: Icons.settings_outlined, active: Icons.settings, label: 'Settings'),
   ];
 
@@ -188,7 +184,6 @@ class _NavShellState extends ConsumerState<NavShell> with WidgetsBindingObserver
     });
 
     return Scaffold(
-      extendBody: true, // screens scroll under the floating glass nav
       body: IndexedStack(
         index: _index,
         children: const [
@@ -199,7 +194,7 @@ class _NavShellState extends ConsumerState<NavShell> with WidgetsBindingObserver
           SettingsScreen(),
         ],
       ),
-      bottomNavigationBar: _GlassNavBar(
+      bottomNavigationBar: _CleanNavBar(
         index: _index,
         destinations: _destinations,
         onSelect: (i) => setState(() => _index = i),
@@ -208,11 +203,11 @@ class _NavShellState extends ConsumerState<NavShell> with WidgetsBindingObserver
   }
 }
 
-/// Floating frosted-glass navigation pill: blurred, top-lit, softly shadowed,
-/// hovering above the content. Built on Material's [NavigationBar] so all its
-/// accessibility behaviour (semantics, tooltips, 48dp targets) is preserved.
-class _GlassNavBar extends StatelessWidget {
-  const _GlassNavBar({
+/// Clean white bottom navigation bar matching the reference design:
+/// simple outlined Material icons, selected tab has a soft blue pill
+/// background with blue icon and text, unselected tabs are dark gray.
+class _CleanNavBar extends StatelessWidget {
+  const _CleanNavBar({
     required this.index,
     required this.destinations,
     required this.onSelect,
@@ -224,55 +219,96 @@ class _GlassNavBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final r = BorderRadius.circular(T.rLg);
-    return SafeArea(
-      top: false,
-      minimum: const EdgeInsets.fromLTRB(T.s12, 0, T.s12, T.s12),
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: r,
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              Colors.white.withValues(alpha: 0.22),
-              Colors.white.withValues(alpha: 0.04),
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border(
+          top: BorderSide(color: T.border.withValues(alpha: 0.5), width: 1),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 8,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: T.s8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              for (int i = 0; i < destinations.length; i++)
+                _NavItem(
+                  icon: destinations[i].icon,
+                  activeIcon: destinations[i].active,
+                  label: destinations[i].label,
+                  selected: i == index,
+                  onTap: () => onSelect(i),
+                ),
             ],
           ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.45),
-              blurRadius: 28,
-              offset: const Offset(0, 12),
-              spreadRadius: -10,
-            ),
-          ],
         ),
-        padding: const EdgeInsets.all(1),
-        child: ClipRRect(
-          borderRadius: r,
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                borderRadius: r,
-                color: cs.surfaceContainer.withValues(alpha: 0.55),
+      ),
+    );
+  }
+}
+
+class _NavItem extends StatelessWidget {
+  const _NavItem({
+    required this.icon,
+    required this.activeIcon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final IconData activeIcon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Semantics(
+        button: true,
+        label: label,
+        selected: selected,
+        child: SizedBox(
+          width: 64,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AnimatedContainer(
+                duration: T.fast,
+                padding: const EdgeInsets.symmetric(
+                    horizontal: T.s16, vertical: T.s6),
+                decoration: BoxDecoration(
+                  color: selected ? T.primaryLight : Colors.transparent,
+                  borderRadius: BorderRadius.circular(T.rPill),
+                ),
+                child: Icon(
+                  selected ? activeIcon : icon,
+                  size: 24,
+                  color: selected ? T.primary : T.textTertiary,
+                ),
               ),
-              child: NavigationBar(
-                selectedIndex: index,
-                onDestinationSelected: onSelect,
-                backgroundColor: Colors.transparent,
-                destinations: [
-                  for (final d in destinations)
-                    NavigationDestination(
-                      icon: Icon(d.icon),
-                      selectedIcon: Icon(d.active),
-                      label: d.label,
-                    ),
-                ],
+              const SizedBox(height: T.s2),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                  color: selected ? T.primary : T.textTertiary,
+                ),
               ),
-            ),
+            ],
           ),
         ),
       ),

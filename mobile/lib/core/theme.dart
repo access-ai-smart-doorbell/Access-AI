@@ -22,10 +22,9 @@ extension AppThemeChoiceLabel on AppThemeChoice {
           orElse: () => AppThemeChoice.system);
 }
 
-/// "Cinema Mobile" theming. Dark is the hero: deep navy canvas, explicit navy
-/// surface ramp (fromSeed alone would tint surfaces green), green primary,
-/// Jarvis cyan/violet as secondary/tertiary, Plus Jakarta Sans throughout.
-/// Light stays a clean functional variant; high-contrast stays WCAG-AAA.
+/// AccessAI bright, accessible theming. Light is the hero: bright white canvas,
+/// electric blue primary, dark navy text, Inter font throughout. Clean,
+/// premium, accessibility-focused design matching the reference mockups.
 class AppTheme {
   AppTheme._();
 
@@ -33,47 +32,61 @@ class AppTheme {
 
   static ThemeData dark() => _base(_darkScheme(), Brightness.dark);
 
-  static ColorScheme _darkScheme() =>
-      ColorScheme.fromSeed(seedColor: T.seed, brightness: Brightness.dark)
-          .copyWith(
-        primary: T.seed,
-        onPrimary: const Color(0xFF03130A),
-        primaryContainer: const Color(0xFF14532D),
-        onPrimaryContainer: const Color(0xFFBBF7D0),
-        secondary: T.jarvis1,
-        onSecondary: const Color(0xFF04121A),
-        secondaryContainer: const Color(0xFF0B2E42),
-        onSecondaryContainer: const Color(0xFFBAE6FD),
-        tertiary: T.jarvis3,
-        onTertiary: const Color(0xFF1B0B2E),
-        tertiaryContainer: const Color(0xFF3B1E5A),
-        onTertiaryContainer: const Color(0xFFE9D5FF),
+  static ColorScheme _lightScheme() => ColorScheme.fromSeed(
+        seedColor: T.primary,
+        brightness: Brightness.light,
+      ).copyWith(
+        primary: T.primary,
+        onPrimary: Colors.white,
+        primaryContainer: T.primaryLight,
+        onPrimaryContainer: T.textPrimary,
+        secondary: T.known,
+        onSecondary: Colors.white,
+        tertiary: T.multi,
+        onTertiary: Colors.white,
         error: T.danger,
-        onError: const Color(0xFF2A0606),
-        errorContainer: const Color(0xFF4C1414),
-        onErrorContainer: const Color(0xFFFECACA),
-        surface: T.bg2,
-        onSurface: T.fg,
-        onSurfaceVariant: T.muted,
-        surfaceContainerLowest: T.bg,
-        surfaceContainerLow: const Color(0xFF131C2E),
-        surfaceContainer: T.surface,
-        surfaceContainerHigh: T.surfaceHi,
-        surfaceContainerHighest: const Color(0xFF2E3D54),
+        onError: Colors.white,
+        surface: T.bg,
+        onSurface: T.textPrimary,
+        onSurfaceVariant: T.textSecondary,
+        surfaceContainerLowest: Colors.white,
+        surfaceContainerLow: const Color(0xFFF8FAFC),
+        surfaceContainer: T.bgCard,
+        surfaceContainerHigh: T.bgSubtle,
+        surfaceContainerHighest: const Color(0xFFE8ECF1),
         surfaceTint: Colors.transparent,
-        outline: T.hairline,
-        outlineVariant: const Color(0xFF22304A),
-        inverseSurface: T.fg,
-        onInverseSurface: T.bg,
+        outline: T.border,
+        outlineVariant: T.borderLight,
+        inverseSurface: T.textPrimary,
+        onInverseSurface: Colors.white,
       );
 
-  static ColorScheme _lightScheme() =>
-      ColorScheme.fromSeed(seedColor: T.seed, brightness: Brightness.light)
+  static ColorScheme _darkScheme() =>
+      ColorScheme.fromSeed(seedColor: T.primary, brightness: Brightness.dark)
           .copyWith(
-        primary: const Color(0xFF15803D),
-        secondary: const Color(0xFF0369A1),
-        tertiary: const Color(0xFF7C3AED),
+        primary: T.primary,
+        onPrimary: Colors.white,
+        primaryContainer: const Color(0xFF14532D),
+        onPrimaryContainer: const Color(0xFFBBF7D0),
+        secondary: T.known,
+        onSecondary: Colors.white,
+        tertiary: T.multi,
+        onTertiary: Colors.white,
         error: T.danger,
+        onError: Colors.white,
+        surface: const Color(0xFF0F172A),
+        onSurface: const Color(0xFFF8FAFC),
+        onSurfaceVariant: const Color(0xFF94A3B8),
+        surfaceContainerLowest: const Color(0xFF0B1120),
+        surfaceContainerLow: const Color(0xFF131C2E),
+        surfaceContainer: const Color(0xFF1E293B),
+        surfaceContainerHigh: const Color(0xFF273449),
+        surfaceContainerHighest: const Color(0xFF2E3D54),
+        surfaceTint: Colors.transparent,
+        outline: const Color(0xFF334155),
+        outlineVariant: const Color(0xFF22304A),
+        inverseSurface: const Color(0xFFF8FAFC),
+        onInverseSurface: const Color(0xFF0B1120),
       );
 
   /// Maximised contrast: near-black surfaces, pure-white text, a bright accent.
@@ -99,67 +112,104 @@ class AppTheme {
     final baseText = brightness == Brightness.dark
         ? Typography.material2021().white
         : Typography.material2021().black;
-    // Plus Jakarta Sans everywhere — heavy tight display, calm readable body.
-    final textTheme = GoogleFonts.plusJakartaSansTextTheme(baseText).copyWith(
-      displayLarge: GoogleFonts.plusJakartaSans(
+    // Inter everywhere — clean geometric sans-serif, highly readable.
+    final textTheme = GoogleFonts.interTextTheme(baseText).copyWith(
+      displayLarge: GoogleFonts.inter(
           textStyle: baseText.displayLarge,
           fontWeight: FontWeight.w800,
-          letterSpacing: -1.2),
-      displayMedium: GoogleFonts.plusJakartaSans(
+          letterSpacing: -1.2,
+          color: T.textPrimary),
+      displayMedium: GoogleFonts.inter(
           textStyle: baseText.displayMedium,
           fontWeight: FontWeight.w800,
-          letterSpacing: -0.8),
-      displaySmall: GoogleFonts.plusJakartaSans(
+          letterSpacing: -0.8,
+          color: T.textPrimary),
+      displaySmall: GoogleFonts.inter(
           textStyle: baseText.displaySmall,
           fontWeight: FontWeight.w700,
-          letterSpacing: -0.5),
-      headlineLarge: GoogleFonts.plusJakartaSans(
+          letterSpacing: -0.5,
+          color: T.textPrimary),
+      headlineLarge: GoogleFonts.inter(
           textStyle: baseText.headlineLarge,
           fontWeight: FontWeight.w700,
-          letterSpacing: -0.5),
-      headlineMedium: GoogleFonts.plusJakartaSans(
+          letterSpacing: -0.5,
+          color: T.textPrimary),
+      headlineMedium: GoogleFonts.inter(
           textStyle: baseText.headlineMedium,
           fontWeight: FontWeight.w700,
-          letterSpacing: -0.3),
-      headlineSmall: GoogleFonts.plusJakartaSans(
-          textStyle: baseText.headlineSmall, fontWeight: FontWeight.w700),
-      titleLarge: GoogleFonts.plusJakartaSans(
+          letterSpacing: -0.3,
+          color: T.textPrimary),
+      headlineSmall: GoogleFonts.inter(
+          textStyle: baseText.headlineSmall,
+          fontWeight: FontWeight.w700,
+          color: T.textPrimary),
+      titleLarge: GoogleFonts.inter(
           textStyle: baseText.titleLarge,
           fontWeight: FontWeight.w700,
-          letterSpacing: -0.2),
-      titleMedium: GoogleFonts.plusJakartaSans(
-          textStyle: baseText.titleMedium, fontWeight: FontWeight.w600),
-      labelLarge: GoogleFonts.plusJakartaSans(
-          textStyle: baseText.labelLarge, fontWeight: FontWeight.w600),
+          letterSpacing: -0.2,
+          color: T.textPrimary),
+      titleMedium: GoogleFonts.inter(
+          textStyle: baseText.titleMedium,
+          fontWeight: FontWeight.w600,
+          color: T.textPrimary),
+      titleSmall: GoogleFonts.inter(
+          textStyle: baseText.titleSmall,
+          fontWeight: FontWeight.w600,
+          color: T.textSecondary),
+      bodyLarge: GoogleFonts.inter(
+          textStyle: baseText.bodyLarge,
+          fontWeight: FontWeight.w400,
+          color: T.textPrimary),
+      bodyMedium: GoogleFonts.inter(
+          textStyle: baseText.bodyMedium,
+          fontWeight: FontWeight.w400,
+          color: T.textSecondary),
+      bodySmall: GoogleFonts.inter(
+          textStyle: baseText.bodySmall,
+          fontWeight: FontWeight.w400,
+          color: T.textTertiary),
+      labelLarge: GoogleFonts.inter(
+          textStyle: baseText.labelLarge,
+          fontWeight: FontWeight.w600,
+          color: T.textPrimary),
+      labelMedium: GoogleFonts.inter(
+          textStyle: baseText.labelMedium,
+          fontWeight: FontWeight.w500,
+          color: T.textSecondary),
+      labelSmall: GoogleFonts.inter(
+          textStyle: baseText.labelSmall,
+          fontWeight: FontWeight.w500,
+          color: T.textTertiary),
     );
 
     return ThemeData(
       useMaterial3: true,
       colorScheme: cs,
-      scaffoldBackgroundColor:
-          highContrast ? cs.surface : cs.surfaceContainerLowest,
+      scaffoldBackgroundColor: highContrast ? cs.surface : T.bg,
       textTheme: textTheme,
       splashFactory: InkSparkle.splashFactory,
       visualDensity: VisualDensity.comfortable,
       appBarTheme: AppBarTheme(
         backgroundColor: Colors.transparent,
         elevation: 0,
+        scrolledUnderElevation: 0,
         centerTitle: false,
-        foregroundColor: cs.onSurface,
-        titleTextStyle: textTheme.titleLarge?.copyWith(color: cs.onSurface),
+        foregroundColor: T.textPrimary,
+        titleTextStyle: textTheme.titleLarge?.copyWith(color: T.textPrimary),
       ),
       cardTheme: CardThemeData(
-        elevation: highContrast ? 0 : 2,
-        color: cs.surfaceContainer,
+        elevation: highContrast ? 0 : 0,
+        color: T.bgCard,
+        surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(T.rMd),
+          borderRadius: BorderRadius.circular(T.rLg),
           side: highContrast
               ? BorderSide(color: cs.outline, width: 2)
-              : BorderSide.none,
+              : const BorderSide(color: T.border, width: 1),
         ),
       ),
       dividerTheme: DividerThemeData(
-        color: highContrast ? cs.outline : cs.outlineVariant,
+        color: highContrast ? cs.outline : T.border,
         thickness: 1,
         space: T.s24,
       ),
@@ -177,7 +227,7 @@ class AppTheme {
         style: OutlinedButton.styleFrom(
           minimumSize: const Size(T.minTouch, T.minTouch),
           side: BorderSide(
-              color: highContrast ? cs.outline : cs.outlineVariant,
+              color: highContrast ? cs.outline : T.border,
               width: highContrast ? 2 : 1),
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(T.rMd)),
@@ -199,31 +249,27 @@ class AppTheme {
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(T.rPill),
           side: BorderSide(
-              color: highContrast ? cs.outline : cs.outlineVariant, width: 1),
+              color: highContrast ? cs.outline : T.border, width: 1),
         ),
-        backgroundColor: highContrast
-            ? cs.surface
-            : cs.surfaceContainer.withValues(alpha: 0.6),
-        labelStyle: textTheme.labelLarge?.copyWith(color: cs.onSurface),
+        backgroundColor: highContrast ? cs.surface : T.bgSubtle,
+        labelStyle: textTheme.labelLarge?.copyWith(color: T.textPrimary),
         padding: const EdgeInsets.symmetric(horizontal: T.s12, vertical: T.s10),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: highContrast
-            ? cs.surfaceContainerHighest
-            : cs.surfaceContainer.withValues(alpha: 0.55),
+        fillColor: highContrast ? cs.surfaceContainerHighest : T.bgSubtle,
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(T.rSm),
+          borderRadius: BorderRadius.circular(T.rMd),
           borderSide: BorderSide(
-              color: highContrast ? cs.outline : cs.outlineVariant),
+              color: highContrast ? cs.outline : T.border),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(T.rSm),
+          borderRadius: BorderRadius.circular(T.rMd),
           borderSide: BorderSide(
-              color: highContrast ? cs.outline : cs.outlineVariant),
+              color: highContrast ? cs.outline : T.border),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(T.rSm),
+          borderRadius: BorderRadius.circular(T.rMd),
           borderSide: BorderSide(color: cs.primary, width: 2),
         ),
       ),
@@ -236,7 +282,7 @@ class AppTheme {
       navigationBarTheme: NavigationBarThemeData(
         height: 76,
         backgroundColor: Colors.transparent,
-        indicatorColor: cs.primary.withValues(alpha: highContrast ? 1 : 0.20),
+        indicatorColor: T.primaryLight,
         surfaceTintColor: Colors.transparent,
         shadowColor: Colors.transparent,
         labelTextStyle: WidgetStatePropertyAll(

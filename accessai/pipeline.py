@@ -17,7 +17,6 @@ import threading
 import time as _time
 import datetime as _dt
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional
 
 try:
     import cv2
@@ -70,6 +69,7 @@ class Pipeline:
         speech_capture_on_trigger: bool = True,          # Phase 7
         translate_announcement: bool = False,            # Phase 8
         cooldown: float = 0.0,                           # Phase 4
+        vlm_cooldown: float = 20.0,
     ):
         self.db = db
         self.history_dir = history_dir
@@ -128,8 +128,12 @@ class Pipeline:
         self._last_spoken_text = ""
         self._last_spoken_at = 0.0
         # VLM pipeline-level rate-limit: track when VLM was last called so
-        # rapid motion events respect the VLM_COOLDOWN without hammering the API.
+        # rapid motion events respect vlm_cooldown without hammering the API,
+        # unless scene dynamics change (new visitor arrives or count changes).
+        self.vlm_cooldown = float(vlm_cooldown)
         self._last_vlm_time = 0.0
+        self._last_vlm_visitor_count = -1
+        self._last_vlm_identity = ""
         # Concurrency: /trigger, /ring, and the wake-word thread can all reach
         # run_once at the same time (each on its own executor thread). One lock
         # serializes whole runs - the pipeline mutates shared state (cooldown
@@ -159,31 +163,18 @@ class Pipeline:
             trigger=trigger,
         )
 
-        # --- Perception steps (each filled by a later phase) ---
-        # Phase 12 (SPEED): face recognition and object detection are INDEPENDENT
-        # (each reads only the frame) and both release the GIL inside native
-        # onnxruntime / torch inference, so we run them CONCURRENTLY on a 2-worker
-        # pool and gather the results. Anti-spoof still runs AFTER the face step
-        # (it needs the face box) and the VLM after that (it needs the identity).
+        # --- Perception: Face recognition (always first) ---
+        # VLM-first architecture: face recognition runs alone to identify WHO
+        # is at the door. Full scene understanding (objects, clothing, actions,
+        # hazards, environment) is delegated to the cloud VLM — which understands
+        # far richer context than YOLO's 80 COCO classes (e.g. "Spain football
+        # jersey", "wall-mounted fan", "photo collage"). YOLO only runs as
+        # FALLBACK when VLM is unavailable or fails.
         run_face = (self.face_enabled and self.face is not None
                     and self.face.available())
-        run_vision = (self.vision_enabled and self.vision is not None
-                      and self.vision.available())
-        face_results, vision_detections = None, None
-        if run_face and run_vision:
-            # SPEED: reuse one long-lived pool instead of building + tearing
-            # down a ThreadPoolExecutor (two OS threads) on every ring.
-            if self._percept_pool is None:
-                self._percept_pool = ThreadPoolExecutor(
-                    max_workers=2, thread_name_prefix="percept")
-            fut_face = self._percept_pool.submit(self.face.identify, frame_bgr)
-            fut_vision = self._percept_pool.submit(self.vision.detect, frame_bgr)
-            face_results = fut_face.result()
-            vision_detections = fut_vision.result()
-        elif run_face:
+        face_results = None
+        if run_face:
             face_results = self.face.identify(frame_bgr)
-        elif run_vision:
-            vision_detections = self.vision.detect(frame_bgr)
 
         # Phase 2 + Phase 15: face recognition for EVERY detected face (not just
         # the largest). Build one Person per face - name/confidence/box plus the
@@ -241,76 +232,102 @@ class Pipeline:
             # Whole event is a spoof only when NO real person is present at all.
             ev.is_spoof = all(p.is_spoof for p in people)
 
-        # Phase 3: object detection -> ev.detected_objects, ev.carried_objects,
-        # and reconcile ev.visitor_count with the people YOLO actually sees.
-        # (Phase 12: detection already ran, concurrently with face, just above.)
-        face_count = ev.visitor_count  # from Phase 2 (number of faces)
-        if vision_detections is not None:
-            detections = vision_detections
-            ev.detected_objects = [
-                DetectedObject(label=d["label"], confidence=d["confidence"],
-                               box=tuple(d["box"])) for d in detections
-            ]
-            carried, person_count = self.vision.summarize(
-                detections, self._parcel_labels)
-            ev.carried_objects = carried
-            # Phase 15 (fixed): an "extra" visitor is a YOLO body with NO
-            # recognised face. Counting person_count - face_count naively turned
-            # every weak/duplicate person box into a phantom visitor (e.g. a 0.47
-            # box overlapping a known person -> a bogus "1 other person"). Instead
-            # count only high-confidence bodies that don't already wrap a detected
-            # face, then total = recognised faces + those genuine extras.
-            face_boxes = [p.box for p in ev.people]
-            ev.extra_unknown = self.vision.count_extra_people(detections, face_boxes)
-            ev.visitor_count = face_count + ev.extra_unknown
-
-        # Phase 6: VLM scene description + OCR -> ev.scene_summary, ev.ocr_text.
-        # Called ONLY for UNKNOWN visitors: a matched known face skips the cloud
-        # round-trip entirely (saves latency + free-tier quota, and keeps known
-        # people's images off a third-party API). ONE combined call fills both
-        # the scene sentence and any parcel-label text. FAIL-SOFT: if the module
-        # is unavailable or every API key fails, both fields stay "" and the
-        # pipeline continues on YOLO-only signals - it never blocks or crashes.
-        # A "something is actually there" guard avoids spending a call on an
-        # empty frame (nobody + no objects).
-        # Phase 12 (SPEED): the VLM is the slowest step (a cloud round-trip). When
-        # vlm_async_enrich is on, we DEFER it for unknown visitors - the fast local
-        # announcement is spoken now, and _enrich_async() runs the VLM in the
-        # background and updates the event + dashboard when it returns. Otherwise
-        # the call is made INLINE here, exactly as in Phase 6.
-        # Phase 15/16: the VLM describes EVERY person at the door. When
-        # vlm_only_for_unknown is True it runs only when at least one visitor is
-        # unknown (an unrecognised face OR a YOLO body with no face); a known-only
-        # scene then skips the cloud round-trip (Phase 6/12 latency+privacy win).
-        # Phase 16 flips the default to False so KNOWN people are described too
-        # (name + clothing/mood + scene, never age/gender) - this DOES send their
-        # frame to the cloud VLM, which is the accepted trade-off for the richer
-        # announcement.
+        # --- VLM-first scene understanding ---
+        # After face recognition, send the image directly to the VLM for full
+        # scene analysis (objects, clothing, actions, hazards, OCR, environment).
+        # The VLM understands context far richer than YOLO's 80 COCO classes —
+        # it describes "Spain football jersey", "wall-mounted fan", "wooden
+        # ceiling", "photo collage on wall" etc. YOLO only runs as FALLBACK
+        # when VLM is unavailable or fails.
+        #
+        # Flow:
+        #   Known visitor:   Face → VLM inline → rich announcement
+        #   Unknown visitor: Face → fast announcement → VLM async enrichment
+        #   VLM unavailable: Face → YOLO fallback → basic announcement
+        face_count = ev.visitor_count  # from face recognition
         has_unknown = (any(not p.known for p in ev.people)
                        or ev.extra_unknown > 0)
         skip_known = self.vlm_only_for_unknown and not has_unknown
         something_present = (ev.visitor_count > 0 or bool(ev.detected_objects)
                              or ev.face_box != (0, 0, 0, 0))
         # Pipeline-level VLM cooldown: skip if called too recently to avoid
-        # hammering the Gemini free tier on rapid motion events.
-        _VLM_COOLDOWN = 60.0  # seconds; mirrors config.VLM_COOLDOWN
+        # excessive API calls on rapid motion triggers, UNLESS scene changed.
         _now = _time.monotonic()
-        vlm_cooldown_ok = (_now - self._last_vlm_time) >= _VLM_COOLDOWN
+        cooldown_elapsed = (_now - self._last_vlm_time) >= self.vlm_cooldown
+        scene_changed = (
+            self._last_vlm_time == 0.0
+            or ev.visitor_count != self._last_vlm_visitor_count
+            or (ev.identity.name or "") != (self._last_vlm_identity or "")
+        )
+        vlm_cooldown_ok = cooldown_elapsed or scene_changed
         vlm_wanted = (self.vlm_enabled and self.vlm is not None
                       and self.vlm.available() and not ev.is_spoof
                       and not skip_known and something_present
                       and vlm_cooldown_ok)
-        # Defer whenever the VLM will run: the fast local announcement (name, or
-        # age/gender for unknowns) is spoken NOW and the VLM description - for
-        # known and unknown alike - follows in the background enrich. A LOCAL
-        # variable (not instance state): it belongs to this run only, and as a
-        # field it raced concurrent runs before the run lock existed.
-        defer_vlm = bool(vlm_wanted and self.vlm_async_enrich)
+        # Defer VLM only for UNKNOWN visitors (they need an instant fast alert
+        # from face age/gender). Known visitors get VLM inline — the identity is
+        # announced immediately and the VLM adds rich clothing/scene details
+        # to the same utterance.
+        defer_vlm = bool(vlm_wanted and self.vlm_async_enrich
+                         and has_unknown)
+        vlm_ran_inline = False
+
         if vlm_wanted and not defer_vlm:
+            # VLM runs inline — full scene understanding in one call
             self._last_vlm_time = _time.monotonic()
+            self._last_vlm_visitor_count = ev.visitor_count
+            self._last_vlm_identity = ev.identity.name or ""
             result = self.vlm.describe_and_read(
                 frame_bgr, facts=self._vlm_facts(ev))
-            self._apply_vlm_result(ev, result)
+            if result and (result.get("scene_summary") or result.get("people")):
+                self._apply_vlm_result(ev, result)
+                vlm_ran_inline = True
+                # Extract carried objects from VLM people descriptions
+                ev.carried_objects = self._extract_carried_from_vlm(ev)
+
+        # --- YOLO fallback ---
+        # Run YOLO only when VLM didn't provide scene understanding:
+        #   - VLM unavailable (no API keys / no network)
+        #   - VLM on cooldown (rapid repeated motion events)
+        #   - VLM deferred (unknown visitor → async enrichment pending)
+        #   - VLM call failed (returned empty result)
+        # This is the safety net: YOLO still gives person count + basic objects
+        # so the announcement is never completely empty.
+        if not vlm_ran_inline:
+            run_vision = (self.vision_enabled and self.vision is not None
+                          and self.vision.available())
+            if run_vision:
+                vision_detections = self.vision.detect(frame_bgr)
+                if vision_detections is not None:
+                    ev.detected_objects = [
+                        DetectedObject(
+                            label=d["label"],
+                            confidence=float(d.get("confidence",
+                                                   d.get("conf", 0.0))),
+                            box=tuple(d["box"]))
+                        for d in vision_detections
+                    ]
+                    carried, person_count = self.vision.summarize(
+                        vision_detections, self._parcel_labels)
+                    ev.carried_objects = carried
+                    face_boxes = [p.box for p in ev.people]
+                    ev.extra_unknown = int(
+                        self.vision.count_extra_people(
+                            vision_detections, face_boxes) or 0)
+                    ev.visitor_count = face_count + ev.extra_unknown
+
+            # Re-evaluate VLM async enrich now that YOLO may have found people/objects
+            has_unknown = (any(not p.known for p in ev.people)
+                           or ev.extra_unknown > 0
+                           or (not ev.identity.known and ev.visitor_count > 0))
+            skip_known = self.vlm_only_for_unknown and not has_unknown
+            something_present = (ev.visitor_count > 0 or bool(ev.detected_objects)
+                                 or ev.face_box != (0, 0, 0, 0))
+            vlm_wanted = (self.vlm_enabled and self.vlm is not None
+                          and self.vlm.available() and not ev.is_spoof
+                          and not skip_known and something_present
+                          and vlm_cooldown_ok)
+            defer_vlm = bool(vlm_wanted and self.vlm_async_enrich)
 
         # Phase 7: speech recognition -> ev.speech_transcript, ev.language_detected.
         # Either an audio array was handed in (a decoded WAV upload) or we record
@@ -407,14 +424,14 @@ class Pipeline:
                 and (now - self._last_spoken_at) < self._cooldown
             )
             want_audio = not in_cooldown
-            # Phase 8 (optional, default off): translate the WHOLE announcement
-            # into the user's language and speak ONLY that. Compose silently first
-            # so we don't speak the English version and then the translation.
-            do_whole = (self.translate_announcement and self.translate is not None
-                        and self.translate_enabled)
+            # Phase 8: translate the announcement into the user's language
+            # if user_language != 'en' or translate_announcement is True.
+            # Compose silently first so we don't speak the English version first.
+            target = getattr(self.translate, "user_language", "en") if (self.translate is not None and self.translate_enabled) else "en"
+            do_whole = (self.translate is not None and self.translate_enabled
+                        and (self.translate_announcement or target != "en"))
             self.access.deliver(ev, speak=want_audio and not do_whole)
             if do_whole:
-                target = getattr(self.translate, "user_language", "en")
                 whole = self.translate.translate(ev.announcement_text,
                                                  src_lang="en", target_lang=target)
                 translated = bool(
@@ -424,11 +441,10 @@ class Pipeline:
                     ev.announcement_text = whole
                 if want_audio and getattr(self.access, "mode", "both") in (
                         "blind", "both"):
-                    # Phase 17: hint the text's language so a per-language edge
-                    # voice speaks it (Malayalam words in a Malayalam voice).
+                    # Use target if translated, else English
                     self.access.speak_text(
                         ev.announcement_text,
-                        lang=target if translated else "")
+                        lang=target if translated else "en")
             if not in_cooldown:
                 self._last_spoken_text = text
                 self._last_spoken_at = now
@@ -524,55 +540,89 @@ class Pipeline:
         changed_people = False
         if vlm_people and len(vlm_people) == len(ordered_people):
             for p, d in zip(ordered_people, vlm_people):
-                appear   = (d.get("appearance", "") or "").strip()
-                clothing = (d.get("clothing",   "") or "").strip()
-                carrying = (d.get("carrying",   "") or "").strip()
-                action   = (d.get("action",     "") or "").strip()
-                position = (d.get("position",   "") or "").strip()
-                expr     = (d.get("expression", "") or "").strip()
-                # Build a rich combined appearance string for legacy fields.
+                appear      = (d.get("appearance",  "") or "").strip()
+                clothing    = (d.get("clothing",    "") or "").strip()
+                carrying    = (d.get("carrying",    "") or "").strip()
+                action      = (d.get("action",      "") or "").strip()
+                position    = (d.get("position",    "") or "").strip()
+                expr        = (d.get("expression",  "") or "").strip()
+                hairstyle   = (d.get("hairstyle",   "") or "").strip()
+                hands       = (d.get("hands",       "") or "").strip()
+                build       = (d.get("build",       "") or "").strip()
+                age_group   = (d.get("age_group",   "") or "").strip()
+                footwear    = (d.get("footwear",    "") or "").strip()
+                accessories = (d.get("accessories", "") or "").strip()
+
                 bits = []
-                if clothing: bits.append(clothing)
-                if appear:   bits.append(appear)
-                if carrying: bits.append(f"carrying {carrying}")
-                if action:   bits.append(action)
+                if clothing:    bits.append(clothing)
+                if hairstyle:   bits.append(f"hair: {hairstyle}")
+                if appear:      bits.append(appear)
+                if hands:       bits.append(f"hands: {hands}")
+                if carrying:    bits.append(f"carrying {carrying}")
+                if accessories: bits.append(f"wearing {accessories}")
+                if action:      bits.append(action)
                 new_appearance = ", ".join(bits)
                 if (new_appearance != p.appearance or expr != p.expression
-                        or position != p.position or clothing != p.clothing):
+                        or position != p.position or clothing != p.clothing
+                        or hairstyle != p.hairstyle or hands != p.hands):
                     changed_people = True
-                p.appearance = new_appearance
-                p.expression = expr
-                # New spatial fields
-                p.position = position
-                p.clothing = clothing
-                p.action   = action
-                p.carrying = carrying
+                p.appearance  = new_appearance
+                p.expression  = expr
+                p.position    = position
+                p.clothing    = clothing
+                p.action      = action
+                p.carrying    = carrying
+                p.hairstyle   = hairstyle
+                p.hands       = hands
+                p.build       = build
+                p.age_group   = age_group
+                p.footwear    = footwear
+                p.accessories = accessories
         elif vlm_people and len(ordered_people) == 1:
             d = vlm_people[0]
             p = ordered_people[0]
-            appear   = (d.get("appearance", "") or "").strip()
-            clothing = (d.get("clothing",   "") or "").strip()
-            carrying = (d.get("carrying",   "") or "").strip()
-            action   = (d.get("action",     "") or "").strip()
-            position = (d.get("position",   "") or "").strip()
-            expr     = (d.get("expression", "") or "").strip()
+            appear      = (d.get("appearance",  "") or "").strip()
+            clothing    = (d.get("clothing",    "") or "").strip()
+            carrying    = (d.get("carrying",    "") or "").strip()
+            action      = (d.get("action",      "") or "").strip()
+            position    = (d.get("position",    "") or "").strip()
+            expr        = (d.get("expression",  "") or "").strip()
+            hairstyle   = (d.get("hairstyle",   "") or "").strip()
+            hands       = (d.get("hands",       "") or "").strip()
+            build       = (d.get("build",       "") or "").strip()
+            age_group   = (d.get("age_group",   "") or "").strip()
+            footwear    = (d.get("footwear",    "") or "").strip()
+            accessories = (d.get("accessories", "") or "").strip()
+
             bits = []
-            if clothing: bits.append(clothing)
-            if appear:   bits.append(appear)
-            if carrying: bits.append(f"carrying {carrying}")
-            if action:   bits.append(action)
+            if clothing:    bits.append(clothing)
+            if hairstyle:   bits.append(f"hair: {hairstyle}")
+            if appear:      bits.append(appear)
+            if hands:       bits.append(f"hands: {hands}")
+            if carrying:    bits.append(f"carrying {carrying}")
+            if accessories: bits.append(f"wearing {accessories}")
+            if action:      bits.append(action)
             new_appearance = ", ".join(bits)
             if (new_appearance != p.appearance or expr != p.expression
-                    or position != p.position or clothing != p.clothing):
+                    or position != p.position or clothing != p.clothing
+                    or hairstyle != p.hairstyle or hands != p.hands):
                 changed_people = True
-            p.appearance = new_appearance
-            p.expression = expr
-            p.position = position
-            p.clothing = clothing
-            p.action   = action
-            p.carrying = carrying
+            p.appearance  = new_appearance
+            p.expression  = expr
+            p.position    = position
+            p.clothing    = clothing
+            p.action      = action
+            p.carrying    = carrying
+            p.hairstyle   = hairstyle
+            p.hands       = hands
+            p.build       = build
+            p.age_group   = age_group
+            p.footwear    = footwear
+            p.accessories = accessories
 
         fields: dict = {}
+        if scene or appearance or ocr or changed_people:
+            ev.status = "analyzed"
         if scene:
             ev.scene_summary = scene
             fields["scene_summary"] = scene
@@ -585,6 +635,29 @@ class Pipeline:
         if changed_people:
             fields["people"] = json.dumps(people_to_dicts(ev.people))
         return fields
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _extract_carried_from_vlm(ev) -> list:
+        """Extract carried objects from VLM-enriched person descriptions.
+
+        Each Person's `carrying` field (set by _apply_vlm_result) may contain
+        items like "backpack", "phone", "parcel".  Collect unique items as a
+        carried_objects list, formatted for the announcement.
+        """
+        carried = []
+        seen: set = set()
+        for p in (ev.people or []):
+            c = (getattr(p, "carrying", "") or "").strip()
+            if c and c.lower() not in ("", "none", "nothing", "n/a"):
+                if c.lower() not in seen:
+                    seen.add(c.lower())
+                    # Format: "a backpack", "a phone", etc.
+                    phrase = (c if (c.startswith("a ") or c.startswith("an ")
+                                    or c.startswith("the "))
+                              else f"a {c}")
+                    carried.append(phrase)
+        return carried
 
     # ------------------------------------------------------------------
     def _enrich_async(self, ev: VisitorEvent, frame_bgr) -> None:
@@ -607,7 +680,15 @@ class Pipeline:
         def worker():
             try:
                 self._last_vlm_time = _time.monotonic()
-                result = self.vlm.describe_and_read(frame_bgr, facts=facts)
+                self._last_vlm_visitor_count = ev.visitor_count
+                self._last_vlm_identity = ev.identity.name or ""
+                t_vlm_start = _time.monotonic()
+                result = self.vlm.describe_and_read(frame_bgr, facts=facts, event_id=event_id)
+                t_vlm_end = _time.monotonic()
+                print(f"[Pipeline] VLM: {t_vlm_end - t_vlm_start:.1f}s")
+                t_motion = getattr(ev, "_t_motion", None)
+                if t_motion is not None:
+                    print(f"[Pipeline] total detailed analysis: {t_vlm_end - t_motion:.1f}s")
             except Exception as e:                        # pragma: no cover
                 print(f"[Pipeline] Async VLM enrich failed for {event_id}: {e}")
                 return
@@ -657,18 +738,28 @@ class Pipeline:
                         to_speak = (ev.announcement_text or "").strip()
                     else:
                         delta_bits = []
-                        appearance = (ev.appearance or "").strip()
                         scene = (ev.scene_summary or "").strip()
-                        if appearance:
-                            delta_bits.append(appearance if appearance.endswith(".")
-                                              else appearance + ".")
+                        appearance = (ev.appearance or "").strip()
                         if scene:
                             delta_bits.append(scene if scene.endswith(".")
                                               else scene + ".")
+                        elif appearance:
+                            delta_bits.append(appearance if appearance.endswith(".")
+                                              else appearance + ".")
                         to_speak = " ".join(delta_bits).strip()
                     if to_speak:
+                        target = getattr(self.translate, "user_language", "en") if (self.translate is not None and self.translate_enabled) else "en"
+                        if target != "en" and self.translate is not None and self.translate_enabled:
+                            tr_speak = self.translate.translate(to_speak, src_lang="en", target_lang=target)
+                            if tr_speak and tr_speak.strip() and tr_speak.strip() != to_speak.strip():
+                                to_speak = tr_speak
+                                speak_lang = target
+                            else:
+                                speak_lang = "en"
+                        else:
+                            speak_lang = "en"
                         try:
-                            self.access.speak_text(to_speak)
+                            self.access.speak_text(to_speak, lang=speak_lang)
                         except Exception as e:            # pragma: no cover
                             print(f"[Pipeline] Enrich speak failed "
                                   f"for {event_id}: {e}")

@@ -47,12 +47,12 @@ String prettyTime(String iso) {
   final mm = local.minute.toString().padLeft(2, '0');
   final ap = local.hour < 12 ? 'AM' : 'PM';
   final time = '$hh:$mm $ap';
-  if (sameDay) return 'Today $time';
+  if (sameDay) return 'Today • $time';
   final yday = now.subtract(const Duration(days: 1));
   final isYday = local.year == yday.year &&
       local.month == yday.month &&
       local.day == yday.day;
-  if (isYday) return 'Yesterday $time';
+  if (isYday) return 'Yesterday • $time';
   return '${local.day}/${local.month} $time';
 }
 

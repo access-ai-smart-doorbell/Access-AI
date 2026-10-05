@@ -11,7 +11,16 @@ import '../services/api_service.dart';
 import '../services/audio_service.dart';
 import 'person_tile.dart';
 
-/// The signature full-screen doorbell alert.
+/// The signature full-screen doorbell alert — redesigned as a rich "AI door
+/// event" rather than a minimal notification.
+///
+/// Layout (top to bottom):
+///   1. Header: bell icon + "Someone's at the door" + timestamp
+///   2. Camera snapshot (from `/snapshot/{event_id}`)
+///   3. Per-person identity tiles with confidence
+///   4. Scene description (the AI's narrative of what it sees)
+///   5. Speech / visitor message (if any)
+///   6. Action buttons: Repeat (blind mode) + Dismiss
 ///
 /// Deaf / Both → a bold caption plus a gentle attention flash (kept BELOW 3
 /// flashes per second — WCAG 2.3.1 — and disabled entirely under reduce-motion,
@@ -112,6 +121,20 @@ class _DoorbellAlertState extends State<DoorbellAlert>
       final p = e.people.first;
       if (p.known && !p.isSpoof) {
         b.write('. ${p.name} is here');
+        if (p.confidence > 0) {
+          b.write(', ${(p.confidence * 100).round()} percent match');
+        }
+      }
+    }
+    if (e.sceneSummary.isNotEmpty) {
+      b.write('. ${e.sceneSummary}');
+    }
+    if (e.hasSpeech) {
+      final speech = e.translatedTranscript.trim().isNotEmpty
+          ? e.translatedTranscript.trim()
+          : e.speechTranscript.trim();
+      if (speech.isNotEmpty) {
+        b.write('. They said: $speech');
       }
     }
     if (e.anySpoof) b.write('. Caution: a face may be a photo');
@@ -153,16 +176,17 @@ class _DoorbellAlertState extends State<DoorbellAlert>
         },
         child: SafeArea(
           child: Padding(
-            padding: const EdgeInsets.all(T.s20),
+            padding: const EdgeInsets.all(T.s16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                // ── Header ────────────────────────────────────────────
                 Row(
                   children: [
                     // Gradient bell tile — reads as "alert" at a glance.
                     Container(
-                      width: 56,
-                      height: 56,
+                      width: 52,
+                      height: 52,
                       decoration: BoxDecoration(
                         gradient: T.aurora,
                         borderRadius: BorderRadius.circular(T.rSm),
@@ -175,15 +199,15 @@ class _DoorbellAlertState extends State<DoorbellAlert>
                         ],
                       ),
                       child: const Icon(Icons.notifications_active,
-                          color: Colors.white, size: 30),
+                          color: Colors.white, size: 26),
                     ),
                     const SizedBox(width: T.s12),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('Someone’s at the door',
-                              style: text.headlineSmall?.copyWith(
+                          Text('Someone\u2019s at the door',
+                              style: text.titleLarge?.copyWith(
                                   fontWeight: FontWeight.w800,
                                   letterSpacing: -0.5)),
                           const SizedBox(height: 2),
@@ -196,9 +220,9 @@ class _DoorbellAlertState extends State<DoorbellAlert>
                     ),
                   ],
                 ),
-                const SizedBox(height: T.s16),
-                // Details sit in a dark panel so text stays legible while the
-                // deaf-mode flash fills the screen around it.
+                const SizedBox(height: T.s12),
+
+                // ── Scrollable event detail ───────────────────────────
                 Expanded(
                   child: Container(
                     decoration: BoxDecoration(
@@ -207,64 +231,142 @@ class _DoorbellAlertState extends State<DoorbellAlert>
                       border: Border.all(
                           color: Colors.white.withValues(alpha: 0.12)),
                     ),
-                    padding: const EdgeInsets.all(T.s16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(e.countLine,
-                            style: text.titleLarge
-                                ?.copyWith(fontWeight: FontWeight.w700)),
-                        const SizedBox(height: T.s16),
-                        Expanded(
-                          child: ListView(
-                            children: [
-                              if (e.sceneSummary.isNotEmpty)
-                                Padding(
-                                  padding: const EdgeInsets.only(bottom: T.s16),
-                                  child: Text(
-                                    e.sceneSummary,
-                                    style: text.bodyLarge,
-                                  ),
-                                )
-                              else if (e.people.isEmpty)
-                                Padding(
-                                  padding: const EdgeInsets.only(bottom: T.s16),
-                                  child: Text(
-                                    'Motion detected at the door.',
-                                    style: text.bodyLarge,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(T.rMd),
+                      child: ListView(
+                        padding: EdgeInsets.zero,
+                        children: [
+                          // ── Camera snapshot ─────────────────────────
+                          if (e.eventId.isNotEmpty)
+                            AspectRatio(
+                              aspectRatio: 16 / 9,
+                              child: Image.network(
+                                widget.api.snapshotUrl(e.eventId),
+                                fit: BoxFit.cover,
+                                gaplessPlayback: true,
+                                errorBuilder: (_, _, _) => Container(
+                                  color: cs.surfaceContainerHighest,
+                                  child: Center(
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.videocam_outlined,
+                                            size: 40,
+                                            color: cs.onSurface
+                                                .withValues(alpha: 0.4)),
+                                        const SizedBox(height: T.s8),
+                                        Text('Camera snapshot unavailable',
+                                            style: text.labelMedium?.copyWith(
+                                                color: cs.onSurface
+                                                    .withValues(alpha: 0.4))),
+                                      ],
+                                    ),
                                   ),
                                 ),
-                              for (final p in e.people)
-                                Padding(
-                                  padding:
-                                      const EdgeInsets.only(bottom: T.s16),
-                                  child: PersonTile(
-                                      person: p, reidSeen: e.reidSeenCount),
-                                ),
-                              if (e.hasSpeech) ...[
-                                const SizedBox(height: T.s8),
-                                Text('They said:',
-                                    style: text.titleSmall?.copyWith(
-                                        color: T.muted,
+                                loadingBuilder:
+                                    (context, child, progress) =>
+                                        progress == null
+                                            ? child
+                                            : Container(
+                                                color: cs
+                                                    .surfaceContainerHighest,
+                                                child: const Center(
+                                                    child:
+                                                        CircularProgressIndicator()),
+                                              ),
+                              ),
+                            ),
+
+                          // ── Identity + details ─────────────────────
+                          Padding(
+                            padding: const EdgeInsets.all(T.s16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Count line
+                                Text(e.countLine,
+                                    style: text.titleMedium?.copyWith(
                                         fontWeight: FontWeight.w700)),
-                                const SizedBox(height: T.s4),
-                                Text(
-                                  (e.translatedTranscript.trim().isNotEmpty
-                                          ? e.translatedTranscript
-                                          : e.speechTranscript)
-                                      .trim(),
-                                  style: text.bodyLarge
-                                      ?.copyWith(fontStyle: FontStyle.italic),
-                                ),
+                                const SizedBox(height: T.s16),
+
+                                // Spoof warning
+                                if (e.anySpoof) ...[
+                                  _AlertBanner(
+                                    icon: Icons.warning_amber,
+                                    color: T.danger,
+                                    text:
+                                        'A face here may be a photo, not a live person.',
+                                  ),
+                                  const SizedBox(height: T.s12),
+                                ],
+
+                                // Per-person tiles
+                                if (e.people.isEmpty && e.sceneSummary.isEmpty)
+                                  Text('Motion detected at the door.',
+                                      style: text.bodyLarge)
+                                else
+                                  for (final p in e.people) ...[
+                                    PersonTile(
+                                        person: p,
+                                        reidSeen: e.reidSeenCount),
+                                    const SizedBox(height: T.s12),
+                                  ],
+
+                                // ── Scene description ────────────────
+                                if (e.sceneSummary.isNotEmpty) ...[
+                                  const SizedBox(height: T.s4),
+                                  _SectionBlock(
+                                    icon: Icons.visibility,
+                                    label: 'Scene description',
+                                    child: Text(
+                                      '"${e.sceneSummary}"',
+                                      style: text.bodyMedium?.copyWith(
+                                          fontStyle: FontStyle.italic,
+                                          height: 1.5),
+                                    ),
+                                  ),
+                                ],
+
+                                // ── Speech / audio ───────────────────
+                                if (e.hasSpeech) ...[
+                                  const SizedBox(height: T.s12),
+                                  _speechSection(context, e),
+                                ],
+
+                                // ── Carried objects ──────────────────
+                                if (e.carriedObjects.isNotEmpty) ...[
+                                  const SizedBox(height: T.s12),
+                                  Wrap(
+                                    spacing: T.s8,
+                                    runSpacing: T.s8,
+                                    children: [
+                                      for (final o in e.carriedObjects)
+                                        _ObjectChip(o),
+                                    ],
+                                  ),
+                                ],
+
+                                // ── Hazards ──────────────────────────
+                                if (e.hazards.isNotEmpty &&
+                                    e.hazards != 'none') ...[
+                                  const SizedBox(height: T.s12),
+                                  _AlertBanner(
+                                      icon: Icons.report_problem,
+                                      color: T.accent,
+                                      text: 'Note: ${e.hazards}'),
+                                ],
                               ],
-                            ],
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
-                const SizedBox(height: T.s16),
+
+                const SizedBox(height: T.s12),
+
+                // ── Action buttons ────────────────────────────────────
                 Row(
                   children: [
                     if (_spoken)
@@ -299,6 +401,160 @@ class _DoorbellAlertState extends State<DoorbellAlert>
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _speechSection(BuildContext context, VisitorEvent e) {
+    final cs = Theme.of(context).colorScheme;
+    final text = Theme.of(context).textTheme;
+    final original = e.speechTranscript.trim();
+    final translated = e.translatedTranscript.trim();
+    final showTranslated = translated.isNotEmpty && translated != original;
+
+    return _SectionBlock(
+      icon: Icons.record_voice_over,
+      label: 'Visitor said',
+      iconColor: cs.primary,
+      labelColor: cs.primary,
+      borderColor: cs.primary.withValues(alpha: 0.3),
+      bgColor: cs.primary.withValues(alpha: 0.08),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('"${showTranslated ? translated : original}"',
+              style: text.bodyMedium?.copyWith(
+                  fontStyle: FontStyle.italic, height: 1.5)),
+          if (showTranslated && original.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text('Original: $original',
+                  style: text.bodySmall?.copyWith(
+                      color: cs.onSurface.withValues(alpha: 0.55))),
+            ),
+          if (e.languageDetected.isNotEmpty && e.languageDetected != 'en')
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text('Language: ${e.languageDetected}',
+                  style: text.labelSmall?.copyWith(
+                      color: cs.onSurface.withValues(alpha: 0.5))),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A visually distinct info section — icon + label header, coloured background,
+/// rounded corners. Used for scene description and speech.
+class _SectionBlock extends StatelessWidget {
+  const _SectionBlock({
+    required this.icon,
+    required this.label,
+    required this.child,
+    this.iconColor,
+    this.labelColor,
+    this.borderColor,
+    this.bgColor,
+  });
+
+  final IconData icon;
+  final String label;
+  final Widget child;
+  final Color? iconColor;
+  final Color? labelColor;
+  final Color? borderColor;
+  final Color? bgColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final text = Theme.of(context).textTheme;
+    final ic = iconColor ?? cs.onSurface.withValues(alpha: 0.7);
+    final lc = labelColor ?? cs.onSurface.withValues(alpha: 0.7);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(T.s12),
+      decoration: BoxDecoration(
+        color: bgColor ?? cs.surfaceContainerHighest.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(T.rSm),
+        border: Border.all(
+            color: borderColor ?? cs.onSurface.withValues(alpha: 0.08)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 16, color: ic),
+              const SizedBox(width: T.s8),
+              Text(label,
+                  style: text.labelMedium
+                      ?.copyWith(color: lc, fontWeight: FontWeight.w700)),
+            ],
+          ),
+          const SizedBox(height: T.s8),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _AlertBanner extends StatelessWidget {
+  const _AlertBanner(
+      {required this.icon, required this.color, required this.text});
+  final IconData icon;
+  final Color color;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: T.s12, vertical: T.s8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(T.rSm),
+        border: Border.all(color: color.withValues(alpha: 0.5)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: color),
+          const SizedBox(width: T.s8),
+          Expanded(
+              child: Text(text,
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodySmall
+                      ?.copyWith(fontWeight: FontWeight.w600))),
+        ],
+      ),
+    );
+  }
+}
+
+class _ObjectChip extends StatelessWidget {
+  const _ObjectChip(this.label);
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: T.s12, vertical: T.s8),
+      decoration: BoxDecoration(
+        color: cs.primary.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.shopping_bag_outlined, size: 14, color: cs.primary),
+          const SizedBox(width: T.s4),
+          Text(label, style: Theme.of(context).textTheme.labelMedium),
+        ],
       ),
     );
   }

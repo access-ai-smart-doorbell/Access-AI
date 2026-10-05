@@ -62,8 +62,11 @@ You are a visual scene understanding assistant for AccessAI, an assistive system
 designed to help visually impaired users understand their surroundings through
 a doorbell or front-door camera.
 
-Your description will be spoken aloud. Do NOT use bullet points, lists,
-markdown, tables, or technical terms. Write only natural spoken sentences.
+A blind user will HEAR your description spoken aloud. They rely on you to SEE for
+them — be their eyes. Every visual detail you notice matters.
+
+Do NOT use bullet points, lists, markdown, tables, or technical terms.
+Write only natural spoken sentences.
 
 PRIORITY ORDER (most important first):
 1. Immediate hazards or obstacles directly in the user's path
@@ -73,10 +76,27 @@ PRIORITY ORDER (most important first):
 4. Actions and movement (walking toward camera, standing, sitting, holding
    something, using a phone, entering or leaving)
 5. Important carried objects (bag, backpack, parcel, phone, umbrella, etc.)
-6. Clothing — type and colour when clearly visible
-7. Visible appearance — hair, glasses, beard, hat, mask, etc.
-8. Important nearby objects (vehicles, furniture, stairs, signs, animals)
-9. Environment — indoor or outdoor, time of day if inferable
+6. Clothing — be SPECIFIC and DETAILED:
+   - Type: T-shirt, polo, jersey, hoodie, jacket, kurta, saree, suit, etc.
+   - Colour and pattern: solid, striped, checkered, patterned, gradient, etc.
+   - Brand logos, team crests, jersey numbers/names when visible
+   - Identify sports jerseys by team when recognisable (e.g. "Spain national
+     team away jersey", "Manchester United home kit", "India cricket jersey")
+   - Notable details: V-neck, collar, zip, buttons, shoulder stripes, etc.
+7. Hairstyle — be SPECIFIC:
+   - Style: fade, undercut, buzz cut, crew cut, long, shoulder-length, curly,
+     wavy, straight, braids, ponytail, bun, afro, bald, receding, etc.
+   - Colour if notable: black, brown, blonde, grey, dyed, highlighted, etc.
+8. Facial features — be SPECIFIC:
+   - Facial hair: clean-shaven, stubble, light mustache, full mustache, goatee,
+     full beard, trimmed beard, etc.
+   - Glasses, sunglasses, mask, piercings, etc.
+9. Important nearby objects (vehicles, furniture, stairs, signs, animals)
+10. Environment — be DETAILED:
+    - Indoor: ceiling type (wooden, false, concrete), wall features (wallpaper,
+      tiles, paint, decorations, photo frames), furniture, lighting (tube light,
+      bulb, LED, natural), fans, windows, doors
+    - Outdoor: weather, time of day, paving, garden, gate, vehicles, street
 
 SPATIAL LANGUAGE — always describe position:
 - Use: left / center / right / directly in front / slightly left or right
@@ -89,7 +109,7 @@ RULES:
 - Do NOT call anyone dangerous, suspicious, or criminal. Unknown simply means
   the face was not recognised by the system.
 - Do NOT state exact age, race, or gender as fact — use cautious language:
-  "appears to be an adult", "appears to be elderly", "short hair", etc.
+  "appears to be a young adult", "appears to be elderly", etc.
 - Do NOT state emotions as fact: say "appears to be smiling", not "is happy".
 - If there are many people, prioritise those closest to the camera.
 - Keep the final description concise enough for comfortable voice output.
@@ -104,26 +124,33 @@ _USER_PROMPT = (
     '    {\n'
     '      "identity": "<name from GROUND TRUTH, or \'an unknown person\'>",\n'
     '      "position": "<left | center | right | directly in front | far background>",\n'
-    '      "distance": "<estimated meters, e.g. \'about 1 meter\', or "">",\n'
-    '      "action": "<standing | walking toward camera | walking away | sitting | holding [object] | using phone | entering doorway | etc.>",\n'
-    '      "clothing": "<type + colour: e.g. \'blue T-shirt and black jeans\', or "">",\n'
-    '      "appearance": "<hair, glasses, beard, hat, mask — only what is clearly visible>",\n'
-    '      "carrying": "<bag, backpack, parcel, phone, umbrella, bottle — or "">",\n'
-    '      "expression": "<appears to be smiling | appears calm | etc., only if face clearly visible, or "">"\n'
-    '    }\n'
+    '      "distance": "<estimated meters, e.g. \'about 1 meter\', or \\"\\">",\n'
+    '      "action": "<standing | walking toward camera | walking away | sitting | holding [object] | using phone | entering doorway | looking down | etc.>",\n'
+    '      "clothing": "<BE SPECIFIC: garment type + colour + pattern + brand/team/logo. E.g. \'white Spain national team away jersey with maroon Adidas stripes and gold V-neck trim\', \'navy blue Nike polo shirt\', \'red plaid flannel shirt\'. Include jersey numbers, sponsor logos, team crests.>",\n'
+    '      "hairstyle": "<BE SPECIFIC: fade, undercut, buzz cut, crew cut, long, curly, wavy, straight, braids, ponytail, bun, afro, bald — plus colour. E.g. \'fade with textured top, black hair\', \'shoulder-length curly brown hair\'>",\n'
+    '      "appearance": "<facial hair (clean-shaven, stubble, light mustache, full mustache, goatee, full beard), glasses, mask, tattoos — only clearly visible>",\n'
+    '      "carrying": "<bag, backpack, parcel, phone, umbrella, bottle, keys — or \\"\\">",\n'
+    '      "expression": "<smiling | calm | neutral | looking down | etc., or \\"\\">",\n'
+    '      "hands": "<empty at sides | in pockets | holding phone | touching face | folded | gesturing — or \\"\\">",\n'
+    '      "build": "<slim | average | stocky | tall | short — or \\"\\">",\n'
+    '      "age_group": "<appears to be: child | teenager | young adult | adult | middle-aged | elderly — or \\"\\">",\n'
+    '      "footwear": "<sneakers, sandals, boots, slippers, barefoot — colour if visible, or \\"\\">",\n'
+    '      "accessories": "<watch, necklace, earrings, cap, headband, wristband — or \\"\\">"}\n'
     '  ],\n'
-    '  "hazards": "<stairs, vehicle blocking entry, wet floor, large obstacle — or "">",\n'
-    '  "objects": "<vehicles, furniture, signs, animals, bags near door with position — or "">",\n'
-    '  "scene": "<2-3 spoken sentences: number of people + what they are doing + any hazard + environment. Use names from GROUND TRUTH.>",\n'
-    '  "labels": "<any visible text on clothing, parcels, signs, vehicles — verbatim, or "">"\n'
-    '}\n\n'
+    '  "hazards": "<stairs, vehicle blocking entry, wet floor, large obstacle — or \\"\\">",\n'
+    '  "objects": "<vehicles, furniture, signs, animals, bags near door with position — or \\"\\">",\n'
+    '  "environment": "<indoor/outdoor, ceiling type, wall features, lighting, decorations, furniture, fan, windows — be detailed>",\n'
+    '  "scene": "<3-5 spoken sentences for a blind user: Describe the person (name, DETAILED clothing with brand/team, hairstyle, facial hair, what their hands are doing, build) + their position and action + environment details (room features, ceiling, wall decorations, lighting, furniture). Be their eyes — every visual detail matters.>",\n'
+    '  "labels": "<any visible text on clothing, parcels, signs, vehicles — verbatim, or \\"\\">"}\n'
+    '\n\n'
     "CRITICAL RULES:\n"
     "- The \"people\" array MUST have ONE entry per visible person — NEVER leave it empty if people are visible.\n"
     "- Order people LEFT TO RIGHT as they appear in the image.\n"
     "- Use names ONLY from GROUND TRUTH — never guess identity.\n"
     "- Describe ONLY what is clearly visible. Use empty string for anything unclear.\n"
     "- NEVER call anyone suspicious, dangerous, or criminal.\n"
-    "- Do NOT state exact age or race as fact — use 'appears to be young adult', etc."
+    "- Do NOT state exact age or race as fact — use 'appears to be young adult', etc.\n"
+    "- For the \"scene\" field: ALWAYS mention clothing details (brand/team if visible), hairstyle, facial hair, and what their hands are doing. A blind user needs to visualise the person and the room."
 )
 
 
@@ -219,6 +246,8 @@ class VLMModule:
         self._last_good_key      = 0
         self._last_error  = ""
         self._last_status = None
+        # Track which provider/model last succeeded for logging.
+        self._last_provider_name = ""
 
         # Legacy single-key compat attributes (used by status() and tests).
         self._last_good = 0
@@ -265,6 +294,7 @@ class VLMModule:
             "last_good_index":  self._last_good,
             "last_status":      self._last_status,
             "last_error":       self._last_error,
+            "last_provider":    self._last_provider_name,
         }
 
     # ------------------------------------------------------------------ encode
@@ -290,7 +320,7 @@ class VLMModule:
             return None
 
     # -------------------------------------------------------------------- chat
-    def _chat(self, data_url, facts=""):
+    def _chat(self, data_url, facts="", event_id=""):
         """POST one VISION chat completion (system+user+image), failing over.
 
         `facts` is an optional ground-truth string from the on-device detectors
@@ -310,14 +340,25 @@ class VLMModule:
                 {"type": "image_url", "image_url": {"url": data_url}},
             ]},
         ]
-        # A crowded frame (5-6 people) needs far more JSON than one visitor -
-        # a 300-token cap truncated it mid-string, the parse failed, and raw
-        # JSON leaked into the spoken announcement. max_tokens is a CAP, not a
-        # target, so the headroom costs nothing on a normal one-person ring.
-        # The longer worst-case reply also needs more time than the default
-        # 12s before we declare the key dead and fail over pointlessly.
-        return self._post(messages, max_tokens=max(self.max_tokens, 700),
-                          timeout=max(self.timeout, 20))
+        # A crowded frame (5-6 people) needs far more JSON than one visitor.
+        # max_tokens is a CAP, not a target.
+        provider_name = (self._providers[self._last_good_provider]["model"]
+                         if self._providers else self.model)
+        disp_provider = "OpenRouter/Qwen3.8" if "qwen" in provider_name.lower() else (
+            "Gemini" if "gemini" in provider_name.lower() else provider_name)
+        print(f"[VLM] Provider: {disp_provider}")
+        _eid = f" event={event_id}" if event_id else ""
+        print(f"[VLM] Request started{_eid}")
+        t0 = time.monotonic()
+        result = self._post(messages, max_tokens=max(self.max_tokens, 700),
+                            timeout=self.timeout)
+        elapsed = time.monotonic() - t0
+        if result:
+            print(f"[VLM] Response received in {elapsed:.2f}s")
+            print(f"[VLM] Analysis complete{_eid}")
+        else:
+            print(f"[VLM] All providers failed in {elapsed:.2f}s")
+        return result
 
     def _post(self, messages, max_tokens=None, timeout=None):
         """POST a chat completion failing over across ALL providers and ALL keys.
@@ -337,6 +378,13 @@ class VLMModule:
         request_timeout = float(timeout or self.timeout)
         req_max_tokens  = int(max_tokens or self.max_tokens)
         now = time.monotonic()
+
+        def _model_label(m):
+            if "qwen" in m.lower():
+                return "Qwen3.8"
+            if "gemini" in m.lower():
+                return "Gemini"
+            return m
 
         for p_idx, provider in enumerate(self._providers):
             p_base  = provider["base_url"]
@@ -371,11 +419,23 @@ class VLMModule:
                 try:
                     r = requests.post(url, headers=headers, json=body,
                                       timeout=request_timeout)
+                except requests.exceptions.Timeout:
+                    self._last_status = None
+                    self._last_error = f"{p_model}: timeout"
+                    curr_name = _model_label(p_model)
+                    print(f"[VLM] {curr_name} failed: Request timeout")
+                    if p_idx + 1 < len(self._providers):
+                        next_name = _model_label(self._providers[p_idx + 1]["model"])
+                        print(f"[VLM] Falling back to {next_name}")
+                    break
                 except Exception as e:
                     self._last_status = None
                     self._last_error  = f"{p_model}/{masked}: network error"
-                    print(f"[VLMModule] {p_model} key {masked} network error, "
-                          f"failing over: {e}")
+                    curr_name = _model_label(p_model)
+                    print(f"[VLM] {curr_name} failed: {e}")
+                    if p_idx + 1 < len(self._providers):
+                        next_name = _model_label(self._providers[p_idx + 1]["model"])
+                        print(f"[VLM] Falling back to {next_name}")
                     continue
 
                 self._last_status = r.status_code
@@ -384,9 +444,12 @@ class VLMModule:
                         content = r.json()["choices"][0]["message"]["content"]
                     except Exception as e:
                         self._last_error = f"{p_model}/{masked}: bad response"
-                        print(f"[VLMModule] {p_model} key {masked} bad response "
-                              f"shape, failing over: {e}")
-                        continue
+                        curr_name = _model_label(p_model)
+                        print(f"[VLM] {curr_name} failed: malformed response ({e})")
+                        if p_idx + 1 < len(self._providers):
+                            next_name = _model_label(self._providers[p_idx + 1]["model"])
+                            print(f"[VLM] Falling back to {next_name}")
+                        break
                     # Strip Qwen / thinking-model <think>…</think> blocks.
                     content = re.sub(r"<think>.*?</think>", "", content,
                                      flags=re.DOTALL).strip()
@@ -397,10 +460,11 @@ class VLMModule:
                     self._last_good_key      = k_idx
                     self._last_good          = k_idx  # legacy compat
                     self._last_error         = ""
+                    self._last_provider_name = p_model
                     self._retry_after.pop(pair, None)
                     self._key_retry_after.pop(k_idx, None)  # legacy compat
                     if p_model != self.model:
-                        print(f"[VLMModule] Failover succeeded on {p_model}.")
+                        print(f"[VLM] Failover succeeded on {p_model}.")
                     return content
 
                 if r.status_code == 429:
@@ -412,25 +476,44 @@ class VLMModule:
                     self._key_retry_after[k_idx] = time.monotonic() + backoff
                     self._last_error = (f"{p_model}/{masked}: HTTP 429 "
                                         f"(back-off {int(backoff)}s)")
-                    print(f"[VLMModule] {p_model} key {masked} HTTP 429 — "
-                          f"back-off {int(backoff)}s, trying next.")
-                elif r.status_code in (503, 529):
-                    # Server overloaded — short back-off then try next model.
+                    curr_name = _model_label(p_model)
+                    print(f"[VLM] {curr_name} failed: HTTP 429")
+                    if p_idx + 1 < len(self._providers):
+                        next_name = _model_label(self._providers[p_idx + 1]["model"])
+                        print(f"[VLM] Falling back to {next_name}")
+                    break
+                elif r.status_code in (500, 502, 503, 504, 529):
+                    # Server error / overloaded — short back-off then try next.
                     self._retry_after[pair] = time.monotonic() + 10.0
-                    self._last_error = f"{p_model}/{masked}: HTTP {r.status_code} overloaded"
-                    print(f"[VLMModule] {p_model} HTTP {r.status_code} (overloaded), "
-                          f"trying next model.")
+                    self._last_error = f"{p_model}/{masked}: HTTP {r.status_code}"
+                    curr_name = _model_label(p_model)
+                    print(f"[VLM] {curr_name} failed: HTTP {r.status_code}")
+                    if p_idx + 1 < len(self._providers):
+                        next_name = _model_label(self._providers[p_idx + 1]["model"])
+                        print(f"[VLM] Falling back to {next_name}")
                     break  # skip remaining keys for this provider — try next
+                elif r.status_code == 401:
+                    self._last_error = f"{p_model}/{masked}: HTTP 401 (bad key)"
+                    curr_name = _model_label(p_model)
+                    print(f"[VLM] {curr_name} failed: HTTP 401 (API key/config error)")
+                    if p_idx + 1 < len(self._providers):
+                        next_name = _model_label(self._providers[p_idx + 1]["model"])
+                        print(f"[VLM] Falling back to {next_name}")
+                    break  # bad key won't work on retry
                 else:
                     self._last_error = f"{p_model}/{masked}: HTTP {r.status_code}"
-                    print(f"[VLMModule] {p_model} key {masked} HTTP "
-                          f"{r.status_code}, failing over.")
+                    curr_name = _model_label(p_model)
+                    print(f"[VLM] {curr_name} failed: HTTP {r.status_code}, failing over.")
+                    if p_idx + 1 < len(self._providers):
+                        next_name = _model_label(self._providers[p_idx + 1]["model"])
+                        print(f"[VLM] Falling back to {next_name}")
 
-        print("[VLMModule] All providers/keys exhausted; YOLO-only fallback.")
+        print("[VLM] All providers/keys exhausted; YOLO-only fallback.")
         return None
 
+
     # --------------------------------------------------------------- high level
-    def describe_and_read(self, frame_bgr, facts="") -> dict:
+    def describe_and_read(self, frame_bgr, facts="", event_id="") -> dict:
         """PREFERRED entry point: one call ->
         {scene_summary, appearance, ocr_text, people}.
 
@@ -446,7 +529,8 @@ class VLMModule:
         """
         empty = {"scene_summary": "", "appearance": "", "ocr_text": "",
                  "people": []}
-        content = self._chat(self._encode(frame_bgr), facts=facts)
+        content = self._chat(self._encode(frame_bgr), facts=facts,
+                             event_id=event_id)
         if not content:
             return empty
         return self._parse(content)
@@ -621,12 +705,19 @@ class VLMModule:
                 # Accept both 'scene' and 'scene_summary' keys
                 scene       = str(obj.get("scene", "")
                                   or obj.get("scene_summary", "") or "").strip()
+                environment = str(obj.get("environment", "") or "").strip()
                 appearance  = str(obj.get("appearance", "") or "").strip()
                 labels      = str(obj.get("labels", "")
                                   or obj.get("ocr_text", "") or "").strip()
                 hazards     = str(obj.get("hazards",  "") or "").strip()
                 objects_txt = str(obj.get("objects",  "") or "").strip()
                 people      = VLMModule._parse_people(obj.get("people"))
+                # If environment is provided and not part of scene, incorporate it
+                if environment and environment.lower() not in scene.lower():
+                    if scene:
+                        scene = f"{scene.rstrip('.')} Environment: {environment.rstrip('.')}."
+                    else:
+                        scene = environment
             elif start == -1:
                 # Plain prose reply — treat entire text as scene summary.
                 scene = text
@@ -635,13 +726,28 @@ class VLMModule:
             pass   # malformed JSON — salvage below
 
         # If JSON parsing yielded nothing useful, fish fields out with regex.
-        if not scene and not people and "{" in text:
-            scene       = VLMModule._salvage_field(text, "scene") \
-                          or VLMModule._salvage_field(text, "scene_summary")
-            appearance  = appearance  or VLMModule._salvage_field(text, "appearance")
-            labels      = labels      or VLMModule._salvage_field(text, "labels")
-            hazards     = hazards     or VLMModule._salvage_field(text, "hazards")
-            objects_txt = objects_txt or VLMModule._salvage_field(text, "objects")
+        if "{" in text:
+            if not scene:
+                scene       = VLMModule._salvage_field(text, "scene") \
+                              or VLMModule._salvage_field(text, "scene_summary")
+            if not appearance:
+                appearance  = VLMModule._salvage_field(text, "appearance")
+            if not labels:
+                labels      = VLMModule._salvage_field(text, "labels") \
+                              or VLMModule._salvage_field(text, "ocr_text")
+            if not hazards:
+                hazards     = VLMModule._salvage_field(text, "hazards")
+            if not objects_txt:
+                objects_txt = VLMModule._salvage_field(text, "objects")
+            if not people and '"people"' in text:
+                p_blocks = re.findall(r'\{\s*"(?:identity|position|clothing|hairstyle|appearance)"[^{}]*\}', text, re.DOTALL)
+                for pb in p_blocks:
+                    try:
+                        p_obj = json.loads(pb)
+                        if isinstance(p_obj, dict):
+                            people.extend(VLMModule._parse_people([p_obj]))
+                    except Exception:
+                        pass
 
         return {
             "scene_summary": scene,
@@ -675,9 +781,10 @@ class VLMModule:
     def _parse_people(raw) -> list:
         """Normalise the model's "people" array into a clean list of dicts.
 
-        Each entry carries the full set of new spatial fields:
-        identity, position, distance, action, appearance, clothing, carrying,
-        expression. Unknown/missing fields default to empty string.
+        Each entry carries the full set of new spatial, clothing, and body fields:
+        identity, position, distance, action, clothing, hairstyle, appearance,
+        hands, build, age_group, footwear, accessories, carrying, expression.
+        Unknown/missing fields default to empty string.
         Anything malformed is dropped defensively.
         """
         out = []
@@ -687,15 +794,21 @@ class VLMModule:
             if not isinstance(item, dict):
                 continue
             out.append({
-                # New spatial / identity fields
-                "identity":   str(item.get("identity",   "") or "").strip(),
-                "position":   str(item.get("position",   "") or "").strip(),
-                "distance":   str(item.get("distance",   "") or "").strip(),
-                "action":     str(item.get("action",     "") or "").strip(),
-                "clothing":   str(item.get("clothing",   "") or "").strip(),
+                # Spatial / identity fields
+                "identity":    str(item.get("identity",    "") or "").strip(),
+                "position":    str(item.get("position",    "") or "").strip(),
+                "distance":    str(item.get("distance",    "") or "").strip(),
+                "action":      str(item.get("action",      "") or "").strip(),
+                "clothing":    str(item.get("clothing",    "") or "").strip(),
+                "hairstyle":   str(item.get("hairstyle",   "") or "").strip(),
+                "hands":       str(item.get("hands",       "") or "").strip(),
+                "build":       str(item.get("build",       "") or "").strip(),
+                "age_group":   str(item.get("age_group",   "") or "").strip(),
+                "footwear":    str(item.get("footwear",    "") or "").strip(),
+                "accessories": str(item.get("accessories", "") or "").strip(),
                 # Legacy fields kept for backward compat with downstream code
-                "appearance": str(item.get("appearance", "") or "").strip(),
-                "carrying":   str(item.get("carrying",   "") or "").strip(),
-                "expression": str(item.get("expression", "") or "").strip(),
+                "appearance":  str(item.get("appearance",  "") or "").strip(),
+                "carrying":    str(item.get("carrying",    "") or "").strip(),
+                "expression":  str(item.get("expression",  "") or "").strip(),
             })
         return out

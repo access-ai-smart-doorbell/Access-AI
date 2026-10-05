@@ -170,6 +170,34 @@
       <ul id="history-list" class="history-list"></ul>
     </section>
 
+    <!-- Recordings (Phase 19) -->
+    <section class="panel recordings">
+      <div class="history-head">
+        <h2>Recordings</h2>
+        <div class="hist-actions">
+          <button id="recordings-refresh" class="ghost">Refresh</button>
+          <span id="recordings-stats" class="muted small"></span>
+        </div>
+      </div>
+      <div id="recordings-grid" class="recordings-grid"></div>
+      <p id="recordings-empty" class="muted small" style="text-align:center; display:none;">
+        No recorded clips yet. Recordings are saved automatically when a person is detected.
+      </p>
+    </section>
+
+    <!-- Video player modal (Phase 19) -->
+    <div id="video-modal" class="video-modal" style="display:none;" role="dialog"
+         aria-label="Video playback" aria-modal="true">
+      <div class="video-modal-backdrop"></div>
+      <div class="video-modal-body">
+        <button id="video-modal-close" class="video-modal-close" aria-label="Close">✕</button>
+        <video id="video-player" controls autoplay class="video-player">
+          Your browser does not support video playback.
+        </video>
+        <div id="video-modal-info" class="video-modal-info"></div>
+      </div>
+    </div>
+
     <!-- System health (Phase 10) -->
     <section class="panel health">
       <div class="history-head">

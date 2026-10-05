@@ -43,15 +43,16 @@ _DEFAULT_LANGUAGE_NAMES = {
     "gu": "Gujarati", "pa": "Punjabi", "ur": "Urdu",
 }
 
-# Groq API defaults.
+# Groq API defaults — fast, accurate, torch-free.
 _GROQ_BASE_URL = "https://api.groq.com/openai/v1/chat/completions"
-_GROQ_MODEL = "llama-3.1-8b-instant"
+_GROQ_MODELS = ["qwen/qwen3.8-27b", "openai/gpt-oss-20b", "openai/gpt-oss-120b"]
+_GROQ_MODEL = _GROQ_MODELS[0]
 
 
 class TranslateModule:
-    def __init__(self, backend="github", user_language="en",
+    def __init__(self, backend="auto", user_language="en",
                  language_names=None, vlm=None, groq_keys=""):
-        self.backend = (backend or "none").lower()
+        req_backend = (backend or "auto").lower()
         self.user_language = (user_language or "en").strip() or "en"
         self.language_names = dict(language_names or _DEFAULT_LANGUAGE_NAMES)
         self.vlm = vlm                      # Phase-6 VLMModule (reused for "github")
@@ -61,33 +62,44 @@ class TranslateModule:
             groq_keys = groq_keys.split(",")
         self._groq_keys = [k.strip() for k in (groq_keys or []) if k and k.strip()]
         self._groq_last_good = 0
+        self._groq_last_model = 0
 
-        if self.backend == "github":
-            ok = bool(vlm is not None and vlm.available())
-            why = "reusing VLM keys" if ok else (
-                "no VLM keys available - PASSTHROUGH (shows original)")
-            print(f"[TranslateModule] backend=github, target="
-                  f"{self.lang_name(self.user_language)} | {why}")
-        elif self.backend == "groq":
-            ok = bool(self._groq_keys and _HAS_REQUESTS)
-            why = (f"{len(self._groq_keys)} key(s)" if ok else
-                   "no Groq keys or requests missing - PASSTHROUGH")
-            print(f"[TranslateModule] backend=groq, target="
-                  f"{self.lang_name(self.user_language)} | {why}")
+        # Backend selection (with auto-resolution):
+        has_groq = bool(self._groq_keys and _HAS_REQUESTS)
+        has_vlm  = bool(vlm is not None and vlm.available())
+
+        if req_backend == "groq" and has_groq:
+            self.backend = "groq"
+        elif req_backend == "github" and has_vlm:
+            self.backend = "github"
+        elif req_backend in ("auto", "groq", "github"):
+            # Prefer Groq for translation (20ms latency, excellent multilingual)
+            if has_groq:
+                self.backend = "groq"
+            elif has_vlm:
+                self.backend = "github"
+            else:
+                self.backend = "none"
         else:
             self.backend = "none"
+
+        if self.backend == "groq":
+            print(f"[TranslateModule] backend=groq ({_GROQ_MODEL}), target="
+                  f"{self.lang_name(self.user_language)} | {len(self._groq_keys)} key(s)")
+        elif self.backend == "github":
+            print(f"[TranslateModule] backend=github, target="
+                  f"{self.lang_name(self.user_language)} | reusing VLM keys")
+        else:
             print(f"[TranslateModule] backend=none | PASSTHROUGH: translation "
                   f"disabled, original transcript shown unchanged")
 
     # ------------------------------------------------------------------ status
     def available(self) -> bool:
-        """True when the backend can ACTUALLY translate. 'none' is a passthrough,
-        so it's not 'available' even though translate() still works (returns the
-        original) - lets the UI say 'showing original'."""
-        if self.backend == "github":
-            return bool(self.vlm is not None and self.vlm.available())
-        if self.backend == "groq":
-            return bool(self._groq_keys and _HAS_REQUESTS)
+        """True when the backend can ACTUALLY translate."""
+        if self._groq_keys and _HAS_REQUESTS:
+            return True
+        if self.vlm is not None and self.vlm.available():
+            return True
         return False
 
     def backend_name(self) -> str:
@@ -95,11 +107,13 @@ class TranslateModule:
 
     def lang_name(self, code) -> str:
         """Human-readable name for an ISO code (falls back to the code itself)."""
-        code = (code or "").strip()
+        code = (code or "").strip().lower()
+        if "-" in code:
+            code = code.split("-")[0]
         return self.language_names.get(code, code or "the target language")
 
     def set_user_language(self, code) -> str:
-        code = (code or "").strip()
+        code = (code or "").strip().lower()
         if code:
             self.user_language = code
         return self.user_language
@@ -122,33 +136,49 @@ class TranslateModule:
         text = (text or "").strip()
         if not text:
             return ""
-        target = (target_lang or self.user_language or "en").strip()
-        src = (src_lang or "").strip()
+        target = (target_lang or self.user_language or "en").strip().lower()
+        src = (src_lang or "").strip().lower()
+
+        # Normalize locale tags like 'en-US' -> 'en'
+        if "-" in target:
+            target = target.split("-")[0]
+        if "-" in src:
+            src = src.split("-")[0]
 
         # Same language => no API call (quota-saving; covers en->en).
         if src and src == target:
             return text
 
         try:
-            if self.backend == "github":
-                out = ""
+            # 1. Primary backend
+            out = ""
+            if self.backend == "groq" or (self._groq_keys and _HAS_REQUESTS):
+                out = self._translate_groq(text, src, target)
+            elif self.backend == "github" and self.vlm is not None and self.vlm.available():
+                out = self.vlm.translate_text(text, self.lang_name(target))
+
+            # 2. Fallback to secondary backend if primary returned empty
+            if not out:
                 if self.vlm is not None and self.vlm.available():
                     out = self.vlm.translate_text(text, self.lang_name(target))
-                return out.strip() if out and out.strip() else text
-            if self.backend == "groq":
-                return self._translate_groq(text, src, target) or text
-            # backend "none" -> passthrough
-            return text
+                elif self._groq_keys and _HAS_REQUESTS:
+                    out = self._translate_groq(text, src, target)
+
+            out = (out or "").strip()
+            # Clean enclosing quotes if added by the LLM
+            if (out.startswith('"') and out.endswith('"')) or (out.startswith("'") and out.endswith("'")):
+                out = out[1:-1].strip()
+            return out if out else text
         except Exception as e:                                # pragma: no cover
             logger.warning("translate failed (%s); using original.", e)
             return text
 
     # ------------------------------------------------------- Groq API (Option B)
     def _translate_groq(self, text, src, target) -> str:
-        """Translate via Groq's OpenAI-compatible chat API.
+        """Translate via Groq's OpenAI-compatible chat API with multi-key and model failover.
 
-        Tries each key in round-robin order. Returns the translated text, or ''
-        on any failure (caller falls back to original). Torch-free, fast, free tier.
+        Tries each key and model in order. Returns the translated text, or ''
+        on any failure (caller falls back to original). Torch-free, ultra-fast.
         """
         if not self._groq_keys or not _HAS_REQUESTS:
             return ""
@@ -157,39 +187,44 @@ class TranslateModule:
         src_hint = f" from {self.lang_name(src)}" if src else ""
         prompt = (
             f"Translate the following text{src_hint} into {target_name}. "
-            f"Return ONLY the translated text, nothing else.\n\n{text}"
+            "Keep the phrasing natural, fluent, and conversational for audio speech. "
+            f"Output ONLY the translated text, with no notes, quotes, or explanations.\n\n{text}"
         )
 
         n = len(self._groq_keys)
         order = [(self._groq_last_good + i) % n for i in range(n)]
 
-        for k_idx in order:
-            key = self._groq_keys[k_idx]
-            masked = f"...{key[-4:]}" if len(key) >= 4 else "****"
-            try:
-                r = _requests.post(
-                    _GROQ_BASE_URL,
-                    headers={"Authorization": f"Bearer {key}",
-                             "Content-Type": "application/json"},
-                    json={
-                        "model": _GROQ_MODEL,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "max_tokens": 500,
-                        "temperature": 0.1,
-                    },
-                    timeout=15,
-                )
-                if r.status_code == 200:
-                    content = r.json()["choices"][0]["message"]["content"]
-                    self._groq_last_good = k_idx
-                    return content.strip()
-                if r.status_code == 429:
-                    logger.info("Groq key %s: HTTP 429, trying next.", masked)
-                    continue
-                logger.warning("Groq key %s: HTTP %d, trying next.",
-                               masked, r.status_code)
-            except Exception as e:
-                logger.warning("Groq key %s: error (%s), trying next.", masked, e)
+        # Try models in priority order
+        for model in _GROQ_MODELS:
+            for k_idx in order:
+                key = self._groq_keys[k_idx]
+                masked = f"...{key[-4:]}" if len(key) >= 4 else "****"
+                try:
+                    r = _requests.post(
+                        _GROQ_BASE_URL,
+                        headers={"Authorization": f"Bearer {key}",
+                                 "Content-Type": "application/json"},
+                        json={
+                            "model": model,
+                            "messages": [{"role": "user", "content": prompt}],
+                            "max_tokens": 500,
+                            "temperature": 0.1,
+                        },
+                        timeout=8,
+                    )
+                    if r.status_code == 200:
+                        content = r.json()["choices"][0]["message"]["content"]
+                        self._groq_last_good = k_idx
+                        return content.strip()
+                    if r.status_code == 429:
+                        logger.info("Groq key %s: HTTP 429, trying next key.", masked)
+                        continue
+                    if r.status_code == 404:
+                        # Model not available on this tier, break to next model
+                        break
+                    logger.warning("Groq key %s model %s: HTTP %d, trying next.",
+                                   masked, model, r.status_code)
+                except Exception as e:
+                    logger.warning("Groq key %s: error (%s), trying next.", masked, e)
 
-        logger.warning("All Groq keys exhausted; returning original.")
         return ""

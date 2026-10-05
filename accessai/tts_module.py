@@ -66,7 +66,6 @@ except Exception as e:                                    # pragma: no cover
 # soundfile (bundled libsndfile 1.1.0) decodes edge-tts MP3 AND writes the WAV we
 # hand to the OS audio player. numpy is a core dep used for sample handling.
 try:
-    import numpy as np
     import soundfile as sf
     _HAS_SOUNDFILE = True
 except Exception:                                         # pragma: no cover
@@ -143,6 +142,38 @@ def _synth_earcon(kind: str):
         out[i:i + n] += (tone * env * 0.45).astype(_np.float32)
     peak = float(_np.max(_np.abs(out))) or 1.0
     return out / peak * 0.6
+
+
+def _detect_script_lang(text: str) -> str:
+    """Detect non-Latin Indic or international script from Unicode codepoints."""
+    if not text:
+        return ""
+    for ch in text:
+        cp = ord(ch)
+        if 0x0900 <= cp <= 0x097F:
+            return "hi"  # Devanagari (Hindi/Marathi)
+        if 0x0D00 <= cp <= 0x0D7F:
+            return "ml"  # Malayalam
+        if 0x0B80 <= cp <= 0x0BFF:
+            return "ta"  # Tamil
+        if 0x0C00 <= cp <= 0x0C7F:
+            return "te"  # Telugu
+        if 0x0C80 <= cp <= 0x0CFF:
+            return "kn"  # Kannada
+        if 0x0980 <= cp <= 0x09FF:
+            return "bn"  # Bengali
+        if 0x0A80 <= cp <= 0x0AFF:
+            return "gu"  # Gujarati
+        if 0x0A00 <= cp <= 0x0A7F:
+            return "pa"  # Gurmukhi (Punjabi)
+        if 0x0600 <= cp <= 0x06FF:
+            return "ur"  # Arabic/Urdu
+        if 0x3040 <= cp <= 0x30FF:
+            return "ja"  # Japanese
+        if 0x4E00 <= cp <= 0x9FFF:
+            return "zh"  # Chinese
+    return ""
+
 
 # Kokoro model file candidates (v1.0 has af_heart/af_bella/...; v0.19 fallback).
 _KOKORO_MODEL_NAMES = ["kokoro-v1.0.onnx", "kokoro-v0_19.onnx", "kokoro.onnx"]
@@ -276,6 +307,33 @@ class TTSModule:
                 return (name, defaults.get(name, ""))
         return ("none", "")
 
+    def _resolve_lang_voice(self, lang: str, text: str) -> tuple[str, str]:
+        """Resolve the effective language and neural voice for this utterance.
+
+        Returns (effective_lang, voice_name). If the text is purely ASCII English
+        even though a non-English lang was requested (e.g. translation fallback),
+        returns ('en', '') so natural English TTS speaks it instead of a foreign
+        neural voice mangling English phonemes.
+        """
+        raw_lang = (lang or "").strip().lower()
+        script_lang = _detect_script_lang(text)
+        effective = script_lang or raw_lang
+        if "-" in effective:
+            effective = effective.split("-")[0]
+
+        is_pure_ascii = all(ord(c) < 128 for c in text)
+        # Only Latin-script non-English languages (es, fr, de, it) should use
+        # non-English voices for ASCII text. For Indic languages (hi, ml, ta, etc.),
+        # ASCII text means the text is in English and must NOT be read by an Indic voice.
+        if is_pure_ascii and effective not in ("en", "es", "fr", "de", "it"):
+            return ("en", "")
+
+        if effective and effective != "en":
+            voice = self._lang_voices.get(effective) or self._lang_voices.get(raw_lang)
+            if voice:
+                return (effective, voice)
+        return ("en", "")
+
     # ------------------------------------------------------------------
     # Worker thread: own the backends, drain the queue forever
     # ------------------------------------------------------------------
@@ -291,15 +349,12 @@ class TTSModule:
             try:
                 if earcon:
                     self._play_earcon(earcon)
-                # Phase 17: a non-English lang hint with a mapped edge voice
-                # overrides the active voice for THIS utterance only, so the
-                # words are spoken by a voice that has their phonemes. Failure
-                # (offline etc.) falls through to the normal cascade below.
-                lang_voice = self._lang_voices.get(lang) if lang else None
-                if lang_voice and lang not in ("en",):
+                # Resolve matching neural voice for authentic native human accent
+                eff_lang, lang_voice = self._resolve_lang_voice(lang, text)
+                if lang_voice and eff_lang != "en":
                     if self._speak_edge(lang_voice, text):
                         continue
-                    print(f"[TTSModule] '{lang}' voice {lang_voice} failed "
+                    print(f"[TTSModule] '{eff_lang}' voice {lang_voice} failed "
                           "(offline?); speaking with the default voice.")
                 self._synth_and_play(engine, voice, text)
             except Exception as e:                        # pragma: no cover
@@ -391,11 +446,9 @@ class TTSModule:
             return None, 0
         with self._lock:
             engine, voice = self._active_engine, self._active_voice
-        # Phase 17: a mapped non-English language goes to its edge voice first
-        # (Kokoro has no Indic phonemes - it would mangle the words).
-        lang = (lang or "").lower()
-        lang_voice = self._lang_voices.get(lang) if lang and lang != "en" else None
-        if lang_voice:
+        # Route non-English text to matching neural voice with native accent
+        eff_lang, lang_voice = self._resolve_lang_voice(lang, text)
+        if lang_voice and eff_lang != "en":
             out = self._edge_wav_bytes(lang_voice, text)
             if out is not None:
                 return out

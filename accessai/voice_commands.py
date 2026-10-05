@@ -409,16 +409,19 @@ def _set_mode(access, mode) -> str:
 # PART 3 - end-to-end interaction, shared by /listen and the wake callback
 # ---------------------------------------------------------------------------
 def run_voice_interaction(*, speech=None, pipeline=None, db=None, latest=None,
-                          access=None, seconds=4, wav_bytes=None) -> dict:
+                          access=None, seconds=4, wav_bytes=None, audio=None) -> dict:
     """Capture a command, parse it, act, and speak the answer.
 
     Used by BOTH the push-to-talk /listen route (which may hand in an uploaded
-    WAV via `wav_bytes`) and the always-on wake callback (which records live).
+    WAV via `wav_bytes`) and the always-on wake callback (which hands in `audio`
+    from the continuous stream or records live).
     Returns a small dict for the dashboard/logs; never raises.
     """
     text, lang = "", ""
     try:
-        if wav_bytes is not None and speech is not None and speech.available():
+        if audio is not None and speech is not None and speech.available():
+            text, lang = speech.transcribe(audio)
+        elif wav_bytes is not None and speech is not None and speech.available():
             text, lang = speech.transcribe_wav(wav_bytes)
         elif speech is not None and speech.available():
             text, lang = speech.listen_and_transcribe(seconds)
@@ -433,7 +436,18 @@ def run_voice_interaction(*, speech=None, pipeline=None, db=None, latest=None,
     spoke = False
     if access is not None and answer:
         try:
-            spoke = bool(access.speak_text(answer))
+            # If user language is non-English, translate answer into user_lang
+            speak_lang = getattr(access, "user_lang", "en") or "en"
+            if speak_lang != "en" and pipeline and getattr(pipeline, "translate", None):
+                tr = pipeline.translate
+                if tr.available():
+                    tr_ans = tr.translate(answer, src_lang="en", target_lang=speak_lang)
+                    if tr_ans and tr_ans.strip():
+                        answer = tr_ans
+            try:
+                spoke = bool(access.speak_text(answer, lang=speak_lang))
+            except TypeError:
+                spoke = bool(access.speak_text(answer))
         except Exception as e:                            # pragma: no cover
             print(f"[VoiceCommands] speak failed: {e}")
             spoke = False

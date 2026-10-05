@@ -1,13 +1,12 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 
 import '../core/motion.dart';
 import '../core/tokens.dart';
 
-/// The signature animated smart-doorbell hero. Concentric "sound" rings pulse
-/// outward from a glowing bell disc lit by the aurora gradient, evoking a ring
-/// in progress. Fully self-contained (custom-painted, no external asset).
+/// The signature animated smart-doorbell hero. Warm amber/gold concentric
+/// rings pulse outward from a glowing bell disc, evoking a ring in progress.
+/// Matches the reference design: warm amber glow on a light background.
+/// Fully self-contained (custom-painted, no external asset).
 /// Motion-safe: when reduce-motion is on it renders a single static ring +
 /// bell with no animation.
 class DoorbellHero extends StatefulWidget {
@@ -48,7 +47,6 @@ class _DoorbellHeroState extends State<DoorbellHero>
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
     final reduce = context.reduceMotion;
 
     // Drive/stop the loop based on motion preference.
@@ -71,9 +69,6 @@ class _DoorbellHeroState extends State<DoorbellHero>
               painter: _DoorbellPainter(
                 t: reduce ? 0.0 : _c.value,
                 active: widget.active,
-                ringColor: cs.primary,
-                accent: T.accent,
-                glow: cs.primary,
                 animate: !reduce,
               ),
             );
@@ -88,17 +83,11 @@ class _DoorbellPainter extends CustomPainter {
   _DoorbellPainter({
     required this.t,
     required this.active,
-    required this.ringColor,
-    required this.accent,
-    required this.glow,
     required this.animate,
   });
 
   final double t; // 0..1 loop phase
   final bool active;
-  final Color ringColor;
-  final Color accent;
-  final Color glow;
   final bool animate;
 
   @override
@@ -106,73 +95,79 @@ class _DoorbellPainter extends CustomPainter {
     final center = Offset(size.width / 2, size.height / 2);
     final maxR = size.width / 2;
 
-    // Pulsing rings — 3 staggered waves swept with the aurora gradient. With
-    // animate off, draw one calm ring.
+    // Warm amber pulsing rings — reference shows golden glow
     final waves = animate ? 3 : 1;
     for (var i = 0; i < waves; i++) {
       final phase = animate ? (t + i / waves) % 1.0 : 0.55;
-      final r = maxR * (0.28 + phase * 0.72);
-      final fade = animate ? (1.0 - phase) : 0.5;
-      final rect = Rect.fromCircle(center: center, radius: r);
-      final paint = Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = (active ? 3.0 : 2.0)
-        ..shader = SweepGradient(
-          transform: GradientRotation(t * 2 * math.pi),
-          colors: [
-            T.jarvis1.withValues(alpha: 0.45 * fade),
-            ringColor.withValues(alpha: 0.40 * fade),
-            T.jarvis2.withValues(alpha: 0.45 * fade),
-            T.jarvis1.withValues(alpha: 0.45 * fade),
-          ],
-        ).createShader(rect);
-      canvas.drawCircle(center, r, paint);
+      final r = maxR * (0.30 + phase * 0.70);
+      final fade = animate ? (1.0 - phase) : 0.4;
+      canvas.drawCircle(
+        center,
+        r,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = (active ? 2.5 : 1.8)
+          ..color = T.accent.withValues(alpha: 0.35 * fade),
+      );
     }
 
-    // Central glowing disc: a wide soft halo, then a glass-like gradient body
-    // with a specular top-light.
+    // Outer soft amber glow
+    final glowR = maxR * 0.38;
+    canvas.drawCircle(
+      center,
+      glowR * 2.2,
+      Paint()
+        ..shader = RadialGradient(
+          colors: [
+            T.accent.withValues(alpha: active ? 0.18 : 0.10),
+            T.accent.withValues(alpha: 0.0),
+          ],
+        ).createShader(Rect.fromCircle(center: center, radius: glowR * 2.2)),
+    );
+
+    // Central amber disc
     final discR = maxR * 0.30;
-    final glowPaint = Paint()
-      ..shader = RadialGradient(
-        colors: [
-          glow.withValues(alpha: active ? 0.85 : 0.55),
-          glow.withValues(alpha: 0.0),
-        ],
-      ).createShader(Rect.fromCircle(center: center, radius: discR * 2.4));
-    canvas.drawCircle(center, discR * 2.4, glowPaint);
+    canvas.drawCircle(
+      center,
+      discR,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            const Color(0xFFFBBF24), // warm amber
+            T.accent,                // deeper amber
+          ],
+        ).createShader(Rect.fromCircle(center: center, radius: discR)),
+    );
 
-    final disc = Paint()
-      ..shader = LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [ringColor, accent],
-      ).createShader(Rect.fromCircle(center: center, radius: discR));
-    canvas.drawCircle(center, discR, disc);
+    // Specular highlight on the disc
+    canvas.drawCircle(
+      center,
+      discR,
+      Paint()
+        ..shader = RadialGradient(
+          center: const Alignment(-0.3, -0.4),
+          radius: 0.9,
+          colors: [
+            Colors.white.withValues(alpha: 0.50),
+            Colors.white.withValues(alpha: 0.0),
+          ],
+        ).createShader(Rect.fromCircle(center: center, radius: discR)),
+    );
 
-    // Specular highlight — the "liquid glass" light hit on the disc's top.
-    final sheen = Paint()
-      ..shader = RadialGradient(
-        center: const Alignment(-0.45, -0.55),
-        radius: 0.9,
-        colors: [
-          Colors.white.withValues(alpha: 0.45),
-          Colors.white.withValues(alpha: 0.0),
-        ],
-      ).createShader(Rect.fromCircle(center: center, radius: discR));
-    canvas.drawCircle(center, discR, sheen);
-
-    // Thin bright rim.
+    // Thin bright rim
     canvas.drawCircle(
       center,
       discR,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5
-        ..color = Colors.white.withValues(alpha: 0.35),
+        ..strokeWidth = 1.2
+        ..color = Colors.white.withValues(alpha: 0.4),
     );
 
-    // Bell glyph.
-    _drawBell(canvas, center, discR * 1.15, Colors.white);
+    // Bell glyph — white bell icon
+    _drawBell(canvas, center, discR * 1.1, Colors.white);
   }
 
   void _drawBell(Canvas canvas, Offset c, double s, Color color) {
@@ -180,10 +175,10 @@ class _DoorbellPainter extends CustomPainter {
       ..color = color
       ..style = PaintingStyle.fill;
     final path = Path();
-    final w = s * 0.9;
-    final h = s * 0.9;
+    final w = s * 0.85;
+    final h = s * 0.85;
     final top = c.dy - h * 0.55;
-    // Bell body: a rounded dome flaring to a wide mouth.
+    // Bell body
     path.moveTo(c.dx - w * 0.5, c.dy + h * 0.30);
     path.quadraticBezierTo(
         c.dx - w * 0.5, top, c.dx, top - h * 0.10);
@@ -192,10 +187,10 @@ class _DoorbellPainter extends CustomPainter {
     path.lineTo(c.dx - w * 0.5, c.dy + h * 0.30);
     path.close();
     canvas.drawPath(path, p);
-    // Clapper.
-    canvas.drawCircle(Offset(c.dx, c.dy + h * 0.42), s * 0.14, p);
-    // Top knob.
-    canvas.drawCircle(Offset(c.dx, top - h * 0.16), s * 0.10, p);
+    // Clapper
+    canvas.drawCircle(Offset(c.dx, c.dy + h * 0.42), s * 0.12, p);
+    // Top knob
+    canvas.drawCircle(Offset(c.dx, top - h * 0.16), s * 0.09, p);
   }
 
   @override

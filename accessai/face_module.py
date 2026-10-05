@@ -67,7 +67,7 @@ def is_safe_person_name(name: str) -> bool:
 
 
 class FaceModule:
-    def __init__(self, known_dir, threshold: float = 0.45,
+    def __init__(self, known_dir, threshold: float = 0.42,
                  model_name: str = "buffalo_l", det_size=(640, 640),
                  ctx_id: int = -1, min_det_score: float = 0.5, db=None):
         self.known_dir = known_dir

@@ -53,6 +53,7 @@ from accessai.wakeword_module import WakeWordModule
 from accessai import voice_commands
 from accessai.server import make_app, LatestFrame
 from accessai.video_recorder import EventVideoRecorder
+from accessai.frame_selector import FrameSelector, FrameSelectConfig
 
 
 def camera_loop(latest: LatestFrame, stop_event: threading.Event,
@@ -188,42 +189,91 @@ def main() -> None:
                                     min_score=config.ANTISPOOF_MIN_SCORE,
                                     backend=config.ANTISPOOF_BACKEND)
 
-    # Phase 6: cloud VLM (scene description) + OCR (label reading). Keys are read
-    # from the environment first (populated by .env above), then config as a
-    # fallback. The module fails soft: no keys / dead network => available()
-    # False and the pipeline runs on YOLO-only signals. OCR is a thin wrapper
-    # that reuses the SAME combined VLM call (no second API round-trip).
+    # Phase 6: cloud VLM (scene description) + OCR (label reading).
+    # PRIMARY:  OpenRouter / Qwen3.8 27B (free, fast, excellent vision).
+    # FALLBACK: Gemini (tried automatically when OpenRouter fails).
+    # If both fail, the pipeline runs on YOLO-only signals (never crashes).
     vlm = None
     ocr = None
     if config.ENABLE_VLM:
-        keys = (os.environ.get("GEMINI_API_KEY", "")
-                or os.environ.get("OPENAI_API_KEY", "")
-                or getattr(config, "VLM_API_KEYS", ""))
+        # --- PRIMARY: OpenRouter / Qwen3.8 ---
+        openrouter_key = (os.environ.get("OPENROUTER_API_KEY", "")
+                          or getattr(config, "OPENROUTER_API_KEY", ""))
+        openrouter_model = getattr(config, "OPENROUTER_MODEL",
+                                   "qwen/qwen3.8-27b:free")
+        openrouter_base  = getattr(config, "OPENROUTER_BASE_URL",
+                                   "https://openrouter.ai/api/v1")
 
-        # Fallback model chain (same endpoint, different quota pools):
-        # Primary → lite variants that have separate quota limits.
-        extra_models = getattr(config, "VLM_FALLBACK_MODELS", [
-            "gemini-3.5-flash-lite",
-            "gemini-3.1-flash-lite",
-            "gemini-flash-lite-latest",
-        ])
+        # --- FALLBACK: Gemini (assembled as extra_providers) ---
+        gemini_keys = (os.environ.get("GEMINI_API_KEY", "")
+                       or os.environ.get("OPENAI_API_KEY", "")
+                       or getattr(config, "VLM_API_KEYS", ""))
+        gemini_base  = config.VLM_BASE_URL
+        gemini_model = config.VLM_MODEL
+        gemini_fallback_models = getattr(config, "VLM_FALLBACK_MODELS", [])
 
-        vlm = VLMModule(keys,
-                        base_url=config.VLM_BASE_URL,
-                        model=config.VLM_MODEL,
-                        timeout=config.VLM_TIMEOUT,
-                        max_tokens=config.VLM_MAX_TOKENS,
-                        temperature=config.VLM_TEMPERATURE,
-                        jpeg_quality=config.VLM_JPEG_QUALITY,
-                        max_image_width=config.VLM_MAX_IMAGE_WIDTH,
-                        extra_models=extra_models,
-                        extra_providers=getattr(config, "VLM_EXTRA_PROVIDERS", []))
+        # Build the Gemini fallback provider chain (primary + lite variants).
+        gemini_providers = []
+        if gemini_keys:
+            gemini_providers.append({
+                "base_url": gemini_base,
+                "model":    gemini_model,
+                "keys":     gemini_keys,
+            })
+            for m in gemini_fallback_models:
+                m = (m or "").strip()
+                if m and m != gemini_model:
+                    gemini_providers.append({
+                        "base_url": gemini_base,
+                        "model":    m,
+                        "keys":     gemini_keys,
+                    })
+
+        # Any additional custom providers from config.
+        extra_custom = getattr(config, "VLM_EXTRA_PROVIDERS", [])
+
+        # Assemble: OpenRouter is primary, Gemini + custom are extra_providers.
+        all_extra = gemini_providers + extra_custom
+
+        if openrouter_key:
+            # OpenRouter is primary; Gemini is fallback via extra_providers.
+            vlm = VLMModule(openrouter_key,
+                            base_url=openrouter_base,
+                            model=openrouter_model,
+                            timeout=config.VLM_TIMEOUT,
+                            max_tokens=config.VLM_MAX_TOKENS,
+                            temperature=config.VLM_TEMPERATURE,
+                            jpeg_quality=config.VLM_JPEG_QUALITY,
+                            max_image_width=config.VLM_MAX_IMAGE_WIDTH,
+                            extra_providers=all_extra)
+            print(f"[AccessAI] VLM PRIMARY: OpenRouter/{openrouter_model}")
+            print(f"[AccessAI] VLM FALLBACK: Gemini ({gemini_model} + "
+                  f"{len(gemini_fallback_models)} lite variants)")
+        elif gemini_keys:
+            # No OpenRouter key: fall back to Gemini-only (old behaviour).
+            vlm = VLMModule(gemini_keys,
+                            base_url=gemini_base,
+                            model=gemini_model,
+                            timeout=config.VLM_TIMEOUT,
+                            max_tokens=config.VLM_MAX_TOKENS,
+                            temperature=config.VLM_TEMPERATURE,
+                            jpeg_quality=config.VLM_JPEG_QUALITY,
+                            max_image_width=config.VLM_MAX_IMAGE_WIDTH,
+                            extra_models=gemini_fallback_models,
+                            extra_providers=extra_custom)
+            print(f"[AccessAI] VLM: Gemini-only (no OPENROUTER_API_KEY)")
+        else:
+            # No keys at all: VLM disabled, YOLO-only.
+            vlm = VLMModule("",
+                            base_url="",
+                            model="",
+                            timeout=config.VLM_TIMEOUT)
+            print("[AccessAI] VLM: No API keys set — YOLO-only mode.")
+
         if config.ENABLE_OCR:
             ocr = OCRModule(vlm=vlm)
         avail = "available" if vlm.available() else "unavailable (YOLO-only)"
-        # NEVER log full keys: only the count + last-4 masks.
-        print(f"[AccessAI] VLM: {config.VLM_MODEL} | {vlm.key_count()} key(s) "
-              f"{vlm.masked_keys()} | {avail}")
+        print(f"[AccessAI] VLM: {vlm.key_count()} key(s) | timeout={config.VLM_TIMEOUT}s | {avail}")
 
     # Phase 7: speech recognition (Whisper + Silero VAD). Whisper is lazy-loaded
     # on first transcription so startup never blocks on the model download. The
@@ -248,12 +298,12 @@ def main() -> None:
     # never moves torch). Degrades to passthrough (original text) when keys are
     # missing. The app MUST start even with translation unavailable.
     translate = None
+    user_language = config.USER_LANGUAGE
     if config.ENABLE_TRANSLATE:
         # A runtime change via POST /user_language is persisted to
         # data/user_language.txt; prefer it over the config default so the user's
         # last choice survives a restart. Best-effort: any read error falls back
         # to config.USER_LANGUAGE.
-        user_language = config.USER_LANGUAGE
         try:
             _lang_file = os.path.join(config.DATA_DIR, "user_language.txt")
             if os.path.isfile(_lang_file):
@@ -316,7 +366,8 @@ def main() -> None:
                     lang=config.KOKORO_LANG,
                     voice_choices=config.VOICE_CHOICES,
                     lang_voices=getattr(config, "LANGUAGE_VOICES", {}))
-    access = AccessibilityEngine(tts=tts, mode=config.ACCESSIBILITY_MODE)
+    access = AccessibilityEngine(tts=tts, mode=config.ACCESSIBILITY_MODE,
+                                  user_lang=user_language)
     print(f"[AccessAI] TTS: {tts.current_voice()} "
           f"(backends: {tts.backends()}) | mode: {access.mode}")
     if antispoof is not None:
@@ -334,7 +385,8 @@ def main() -> None:
                                   threshold=config.WAKEWORD_THRESHOLD,
                                   cooldown=config.WAKEWORD_COOLDOWN,
                                   inference_framework=config.WAKEWORD_INFERENCE_FRAMEWORK,
-                                  model_dir=getattr(config, "WAKEWORD_MODEL_DIR", ""))
+                                  model_dir=getattr(config, "WAKEWORD_MODEL_DIR", ""),
+                                  command_seconds=getattr(config, "WAKEWORD_COMMAND_SECONDS", 4.5))
         avail = "available" if wakeword.available() else "unavailable (push-to-talk only)"
         print(f"[AccessAI] Wake word: {wakeword.model_name} | {avail}")
 
@@ -359,7 +411,8 @@ def main() -> None:
                         vlm_enrich_speak_full=config.VLM_ENRICH_SPEAK_FULL,
                         speech_capture_on_trigger=config.SPEECH_CAPTURE_ON_TRIGGER,
                         translate_announcement=config.TRANSLATE_ANNOUNCEMENT,
-                        access=access, cooldown=config.EVENT_COOLDOWN)
+                        access=access, cooldown=config.EVENT_COOLDOWN,
+                        vlm_cooldown=getattr(config, "VLM_COOLDOWN", 20.0))
     latest = LatestFrame()
 
     # --- Event video recorder (Phase 18) ---
@@ -447,10 +500,11 @@ def main() -> None:
     # /listen (capture -> parse -> act -> speak) and pushes the result to any open
     # dashboards. Only START the listener if the user opted into always-on.
     if wakeword is not None and wakeword.available():
-        def _on_wake():
+        def _on_wake(audio=None):
             result = voice_commands.run_voice_interaction(
                 speech=speech, pipeline=pipeline, db=db, latest=latest,
-                access=access, seconds=config.WAKEWORD_COMMAND_SECONDS)
+                access=access, seconds=config.WAKEWORD_COMMAND_SECONDS,
+                audio=audio)
             bridge = getattr(app.state, "broadcast_threadsafe", None)
             if bridge is not None:
                 bridge({"type": "voice", **result})
@@ -484,11 +538,52 @@ def main() -> None:
                               interval=config.MOTION_INTERVAL,
                               warmup=config.MOTION_WARMUP)
 
+        # Phase 19: best-frame selector — observes for a short window after
+        # motion and picks the single best frame for the expensive pipeline.
+        _fs_cfg = FrameSelectConfig(
+            window_sec=getattr(config, 'FRAME_SELECT_WINDOW_SEC', 2.5),
+            sample_fps=getattr(config, 'FRAME_SELECT_SAMPLE_FPS', 10.0),
+            min_sharpness=getattr(config, 'FRAME_SELECT_MIN_SHARPNESS', 50.0),
+            min_person_conf=getattr(config, 'FRAME_SELECT_MIN_PERSON_CONF', 0.35),
+            min_face_conf=getattr(config, 'FRAME_SELECT_MIN_FACE_CONF', 0.3),
+            min_exposure=getattr(config, 'FRAME_SELECT_MIN_EXPOSURE', 30),
+            max_exposure=getattr(config, 'FRAME_SELECT_MAX_EXPOSURE', 230),
+            stability_window=getattr(config, 'FRAME_SELECT_STABILITY_WINDOW', 0.5),
+            min_quality=getattr(config, 'FRAME_SELECT_MIN_QUALITY', 0.3),
+            early_exit_quality=getattr(config, 'FRAME_SELECT_EARLY_EXIT', 0.75),
+        )
+        # Optionally inject YOLO and face detection for richer scoring.
+        _yolo_fn = None
+        if vision is not None and vision.available():
+            _yolo_fn = vision.detect
+        _face_fn = None
+        # NOTE: face.identify is too expensive to run on every frame in the
+        # observation window (it does full embedding matching). Face scoring
+        # is left disabled; YOLO person + sharpness + exposure + stability
+        # are sufficient for frame selection.
+        frame_selector = FrameSelector(
+            latest, _fs_cfg, yolo_detect=_yolo_fn, face_detect=_face_fn)
+
         def _on_motion():
-            frame = latest.get()
+            # Phase 19: observe for a short window and pick the best frame
+            # instead of grabbing the current (possibly blurry) frame.
+            t_motion_start = time.monotonic()
+            frame = frame_selector.select_best_frame()
+            t_frame_selected = time.monotonic()
             if frame is None:
+                # No frame met minimum quality — discard this motion event.
                 return
+            t_motion_to_frame = t_frame_selected - t_motion_start
+            print(f"[Pipeline] motion → best frame: {t_motion_to_frame:.1f}s")
+
+            t_det_start = time.monotonic()
             ev = pipeline.run_once(frame, trigger="motion")
+            t_det_end = time.monotonic()
+            t_det = t_det_end - t_det_start
+            print(f"[Pipeline] best frame → local detection: {t_det:.1f}s")
+            t_initial = t_det_end - t_motion_start
+            print(f"[Pipeline] total initial event: {t_initial:.1f}s")
+            setattr(ev, "_t_motion", t_motion_start)
             bridge = getattr(app.state, "broadcast_threadsafe", None)
             if bridge is not None:
                 from accessai.server import _jsonify
@@ -515,6 +610,15 @@ def main() -> None:
                         "location":   "front_door",
                         "trigger":    ev.trigger,
                     })
+                    # Phase 19: link the clip filename to the event.
+                    clip_name = recorder.get_current_clip_filename()
+                    if clip_name and clip_name != ev.video_path:
+                        ev.video_path = clip_name
+                        try:
+                            db.update_event_fields(ev.event_id,
+                                                  video_path=clip_name)
+                        except Exception as _e:
+                            print(f"[Motion] video_path update failed: {_e}")
                 else:
                     recorder.on_person_gone()
 

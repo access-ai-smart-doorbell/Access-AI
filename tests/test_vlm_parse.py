@@ -19,8 +19,11 @@ def test_parse_good_json():
     assert out["scene_summary"] == "Appears to be a delivery: holding a box."
     assert out["appearance"] == "A person in a red shirt."
     assert out["ocr_text"] == "Amazon"
-    assert out["people"] == [{"appearance": "red shirt", "carrying": "a box",
-                              "expression": "neutral"}]
+    assert len(out["people"]) == 1
+    p0 = out["people"][0]
+    assert p0["appearance"] == "red shirt"
+    assert p0["carrying"] == "a box"
+    assert p0["expression"] == "neutral"
 
 
 def test_parse_fenced_json():
@@ -61,3 +64,45 @@ def test_parse_truncated_json_with_scene_present():
 
 def test_salvage_field_missing_key_is_empty():
     assert VLMModule._salvage_field('{"scene": "x"}', "labels") == ""
+
+
+def test_parse_rich_vlm_fields():
+    raw_json = '''{
+      "people": [
+        {
+          "identity": "Vinay",
+          "position": "center",
+          "distance": "about 1 meter",
+          "action": "standing looking at camera",
+          "clothing": "white Spain national team away jersey with maroon stripes",
+          "hairstyle": "fade with black hair",
+          "appearance": "light stubble and mustache",
+          "hands": "empty at sides",
+          "build": "slim build",
+          "age_group": "young adult",
+          "footwear": "white sneakers",
+          "accessories": "silver watch",
+          "carrying": "",
+          "expression": "calm"
+        }
+      ],
+      "hazards": "none",
+      "objects": "none",
+      "environment": "indoor hallway with ceiling lighting and plain white wall",
+      "scene": "Vinay is standing directly in front of the camera.",
+      "labels": ""
+    }'''
+    out = VLMModule._parse(raw_json)
+    assert len(out["people"]) == 1
+    p = out["people"][0]
+    assert p["identity"] == "Vinay"
+    assert p["clothing"] == "white Spain national team away jersey with maroon stripes"
+    assert p["hairstyle"] == "fade with black hair"
+    assert p["appearance"] == "light stubble and mustache"
+    assert p["hands"] == "empty at sides"
+    assert p["build"] == "slim build"
+    assert p["age_group"] == "young adult"
+    assert p["footwear"] == "white sneakers"
+    assert p["accessories"] == "silver watch"
+    assert "indoor hallway" in out["scene_summary"]
+

@@ -439,10 +439,16 @@ async function refreshHistory() {
           ${hPeople ? "" : hDescr}
           ${hAppear}
           <div class="h-meta">${ev.announcement_text || ""}</div>
+          ${ev.video_path ? `<button class="h-video" title="Play recording">▶ View Recording</button>` : ""}
         </div>
         <button class="h-del" title="Delete this event" aria-label="Delete">✕</button>`;
       const delBtn = li.querySelector(".h-del");
       if (delBtn) delBtn.addEventListener("click", () => deleteEvent(ev.event_id));
+      const vidBtn = li.querySelector(".h-video");
+      if (vidBtn) vidBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openVideoModal(`/event/${encodeURIComponent(ev.event_id)}/clip`, ev);
+      });
       historyList.appendChild(li);
     }
   } catch (e) {
@@ -1267,6 +1273,7 @@ refreshSuggestions();      // Phase 9
 refreshWakeStatus();       // Phase 10
 refreshHealth();           // Phase 10
 refreshVoices();           // Phase 11: populate the natural-voice picker
+refreshRecordings();       // Phase 19: load saved video clips
 connectWS();
 // Phase 17: the MJPEG <img> can't send an Authorization header - append the
 // token to its URL when one is stored. (No-op with auth off.)
@@ -1274,3 +1281,153 @@ if (authToken) {
   const vid = document.getElementById("video");
   if (vid) vid.src = tokenQS("/video");
 }
+
+// ── Phase 19: Recordings UI + Video Modal ────────────────────────────────────
+
+function openVideoModal(url, ev) {
+  const modal = el("video-modal");
+  const player = el("video-player");
+  const info = el("video-modal-info");
+  if (!modal || !player) return;
+
+  player.src = tokenQS(url);
+  player.load();
+
+  // Build info line
+  if (ev && info) {
+    const who = (ev.identity && ev.identity.known)
+      ? ev.identity.name : "Unknown";
+    const time = fmtTime(ev.timestamp || "");
+    const count = ev.visitor_count || 0;
+    info.innerHTML = `
+      <span class="vm-who">${who}</span>
+      <span class="vm-time">${time}</span>
+      ${count > 0 ? `<span class="vm-count">${count} person${count > 1 ? "s" : ""}</span>` : ""}
+      ${ev.announcement_text ? `<span class="vm-ann">${ev.announcement_text}</span>` : ""}
+    `;
+  } else if (info) {
+    info.innerHTML = "";
+  }
+
+  modal.style.display = "flex";
+  document.body.classList.add("modal-open");
+}
+
+function closeVideoModal() {
+  const modal = el("video-modal");
+  const player = el("video-player");
+  if (modal) modal.style.display = "none";
+  if (player) { player.pause(); player.removeAttribute("src"); player.load(); }
+  document.body.classList.remove("modal-open");
+}
+
+// Modal close handlers
+const modalClose = el("video-modal-close");
+if (modalClose) modalClose.addEventListener("click", closeVideoModal);
+const modalBackdrop = document.querySelector(".video-modal-backdrop");
+if (modalBackdrop) modalBackdrop.addEventListener("click", closeVideoModal);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeVideoModal();
+});
+
+// Recordings refresh + rendering
+async function refreshRecordings() {
+  const grid = el("recordings-grid");
+  const empty = el("recordings-empty");
+  const stats = el("recordings-stats");
+  if (!grid) return;
+  try {
+    const r = await fetch("/clips");
+    const data = await r.json();
+    const clips = data.clips || [];
+    grid.innerHTML = "";
+    if (clips.length === 0) {
+      if (empty) empty.style.display = "block";
+      if (stats) stats.textContent = "";
+      return;
+    }
+    if (empty) empty.style.display = "none";
+
+    // Stats
+    const totalMB = clips.reduce((s, c) => s + (c.size_bytes || 0), 0) / (1024 * 1024);
+    if (stats) stats.textContent = `${clips.length} clip${clips.length > 1 ? "s" : ""} · ${totalMB.toFixed(1)} MB`;
+
+    // Group by date
+    const groups = {};
+    for (const clip of clips) {
+      const ts = clip.timestamp || "";
+      let dateKey = "Unknown date";
+      if (ts) {
+        const d = new Date(ts);
+        if (!isNaN(d.getTime())) {
+          const today = new Date();
+          const yesterday = new Date(); yesterday.setDate(today.getDate() - 1);
+          if (d.toDateString() === today.toDateString()) dateKey = "Today";
+          else if (d.toDateString() === yesterday.toDateString()) dateKey = "Yesterday";
+          else dateKey = d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+        }
+      }
+      (groups[dateKey] = groups[dateKey] || []).push(clip);
+    }
+
+    for (const [date, clipList] of Object.entries(groups)) {
+      const header = document.createElement("div");
+      header.className = "rec-date-header";
+      header.textContent = date;
+      grid.appendChild(header);
+
+      for (const clip of clipList) {
+        const card = document.createElement("div");
+        card.className = "rec-card";
+        const who = clip.person || "Unknown";
+        const recognized = clip.recognized ? "Known" : "Unknown";
+        const time = clip.timestamp ? fmtTime(clip.timestamp) : "";
+        const dur = clip.duration_sec ? `${Math.round(clip.duration_sec)}s` : "";
+        const sizeMB = clip.size_bytes ? `${(clip.size_bytes / (1024 * 1024)).toFixed(1)} MB` : "";
+        const eventId = clip.event_id || "";
+
+        // Use event snapshot as thumbnail if available, else a play icon placeholder
+        const thumbSrc = eventId
+          ? tokenQS(`/snapshot/${encodeURIComponent(eventId)}`)
+          : "";
+
+        card.innerHTML = `
+          <div class="rec-thumb">
+            ${thumbSrc ? `<img src="${thumbSrc}" alt="thumbnail" onerror="this.style.display='none'">` : ""}
+            <div class="rec-play-overlay">▶</div>
+          </div>
+          <div class="rec-info">
+            <div class="rec-who">${who} <span class="chip rec-chip">${recognized}</span></div>
+            <div class="rec-meta">${time}${dur ? ` · ${dur}` : ""}${sizeMB ? ` · ${sizeMB}` : ""}</div>
+          </div>
+          <button class="rec-del" title="Delete recording" aria-label="Delete">✕</button>
+        `;
+
+        // Play on click
+        const thumb = card.querySelector(".rec-thumb");
+        if (thumb) thumb.addEventListener("click", () => {
+          const url = `/clips/${encodeURIComponent(clip.filename)}`;
+          openVideoModal(url, { timestamp: clip.timestamp, identity: { known: clip.recognized, name: who },
+                                visitor_count: 1, announcement_text: "" });
+        });
+
+        // Delete
+        const delBtn = card.querySelector(".rec-del");
+        if (delBtn) delBtn.addEventListener("click", async () => {
+          if (!confirm(`Delete recording for ${who}?`)) return;
+          try {
+            await fetch(`/clips/${encodeURIComponent(clip.filename)}`, { method: "DELETE" });
+          } catch (e) { console.warn("delete clip error", e); }
+          refreshRecordings();
+        });
+
+        grid.appendChild(card);
+      }
+    }
+  } catch (e) {
+    console.warn("recordings refresh failed", e);
+  }
+}
+
+const recRefresh = el("recordings-refresh");
+if (recRefresh) recRefresh.addEventListener("click", refreshRecordings);
