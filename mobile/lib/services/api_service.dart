@@ -306,5 +306,48 @@ class ApiService {
     }
   }
 
+  // --- Video clips ----------------------------------------------------------
+  /// Fetches the list of recorded video clips from the server.
+  /// Returns a list of clip metadata maps with keys: filename, size_bytes,
+  /// modified, event_id, etc.
+  Future<List<Map<String, dynamic>>> clipsList() async {
+    final m = await _get('/clips');
+    final raw = m['clips'];
+    if (raw is List) {
+      return raw
+          .whereType<Map>()
+          .map((e) => e.cast<String, dynamic>())
+          .toList();
+    }
+    return const [];
+  }
+
+  /// Returns the full URL for streaming/downloading a specific clip.
+  String clipUrl(String filename) =>
+      _tq('$baseUrl/clips/${Uri.encodeComponent(filename)}');
+
+  /// Returns the full URL for the clip associated with a specific event.
+  String eventClipUrl(String eventId) =>
+      _tq('$baseUrl/event/${Uri.encodeComponent(eventId)}/clip');
+
+  /// Deletes a video clip by filename.
+  Future<void> deleteClip(String filename) async {
+    try {
+      final r = await _dio.delete(
+          '/clips/${Uri.encodeComponent(filename)}');
+      if (r.statusCode == null || r.statusCode! >= 400) {
+        final detail = r.data is Map
+            ? asStr((r.data as Map)['detail'])
+            : '';
+        throw ApiException(
+            detail.isNotEmpty ? detail : 'Delete failed (${r.statusCode})',
+            statusCode: r.statusCode);
+      }
+    } catch (e) {
+      if (e is ApiException) rethrow;
+      _fail(e);
+    }
+  }
+
   void close() => _dio.close(force: true);
 }

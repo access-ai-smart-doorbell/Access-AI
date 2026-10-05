@@ -8,6 +8,7 @@ import '../models/visitor_event.dart';
 import '../services/audio_service.dart';
 import '../state/providers.dart';
 import '../widgets/alert_overlay.dart';
+import 'clips_screen.dart';
 import 'history_screen.dart';
 import 'home_screen.dart';
 import 'live_screen.dart';
@@ -65,6 +66,7 @@ class _NavShellState extends ConsumerState<NavShell> with WidgetsBindingObserver
   static const _destinations = [
     (icon: Icons.home_outlined, active: Icons.home, label: 'Door'),
     (icon: Icons.videocam_outlined, active: Icons.videocam, label: 'Live'),
+    (icon: Icons.video_library_outlined, active: Icons.video_library, label: 'Clips'),
     (icon: Icons.access_time, active: Icons.access_time_filled, label: 'History'),
     (icon: Icons.person_outline, active: Icons.person, label: 'People'),
     (icon: Icons.settings_outlined, active: Icons.settings, label: 'Settings'),
@@ -189,6 +191,7 @@ class _NavShellState extends ConsumerState<NavShell> with WidgetsBindingObserver
         children: const [
           HomeScreen(),
           LiveScreen(),
+          ClipsScreen(),
           HistoryScreen(),
           PeopleScreen(),
           SettingsScreen(),

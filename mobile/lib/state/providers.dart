@@ -329,3 +329,7 @@ class SelfTriggeredIdNotifier extends Notifier<String?> {
 final selfTriggeredIdProvider =
     NotifierProvider<SelfTriggeredIdNotifier, String?>(
         SelfTriggeredIdNotifier.new);
+
+// --- Video clips (recorded event videos) ----------------------------------
+final clipsProvider = FutureProvider<List<Map<String, dynamic>>>(
+    (ref) async => ref.watch(apiProvider).clipsList());

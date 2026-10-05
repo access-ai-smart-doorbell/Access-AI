@@ -53,6 +53,7 @@ dependencies:
   # the app closed; flutter_local_notifications posts the alert itself.
   flutter_local_notifications: ^19.4.2
   flutter_foreground_task: ^9.1.0
+  video_player: ^2.14.1
 
 dev_dependencies:
   flutter_test:

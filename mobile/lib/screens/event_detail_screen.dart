@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:video_player/video_player.dart';
 
 import '../core/format.dart';
 import '../core/motion.dart';
@@ -36,6 +37,18 @@ class _EventDetailScreenState extends ConsumerState<EventDetailScreen> {
         ? e.announcementText
         : '${e.countLine}. ${e.sceneSummary}';
     await ref.read(audioProvider).speak(text, ref.read(apiProvider));
+  }
+
+  void _playClip(BuildContext context) {
+    final api = ref.read(apiProvider);
+    final e = widget.event;
+    final url = api.eventClipUrl(e.eventId);
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => _EventVideoPlayerScreen(
+        url: url,
+        eventId: e.eventId,
+      ),
+    ));
   }
 
   Future<void> _delete() async {
@@ -476,28 +489,48 @@ class _EventDetailScreenState extends ConsumerState<EventDetailScreen> {
                           const EdgeInsets.symmetric(horizontal: T.s16),
                       child: Entrance(
                         index: 6,
-                        child: Row(
+                        child: Column(
                           children: [
-                            Expanded(
-                              child: _ActionButton(
-                                icon: Icons.volume_up,
-                                label: 'Repeat',
-                                sublabel: 'Play the audio again',
-                                color: T.primary,
-                                bgColor: T.primaryLighter,
-                                onTap: _speak,
+                            // Watch Recording button
+                            if (e.eventId.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: T.s12),
+                                child: SizedBox(
+                                  width: double.infinity,
+                                  child: _ActionButton(
+                                    icon: Icons.play_circle_outline,
+                                    label: 'Watch Recording',
+                                    sublabel: 'Play the event video clip',
+                                    color: T.accent,
+                                    bgColor: T.bgSubtle,
+                                    onTap: () => _playClip(context),
+                                  ),
+                                ),
                               ),
-                            ),
-                            const SizedBox(width: T.s12),
-                            Expanded(
-                              child: _ActionButton(
-                                icon: Icons.check_circle,
-                                label: 'Dismiss',
-                                sublabel: 'Mark as seen',
-                                color: T.known,
-                                bgColor: T.knownBg,
-                                onTap: () => Navigator.of(context).pop(),
-                              ),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _ActionButton(
+                                    icon: Icons.volume_up,
+                                    label: 'Repeat',
+                                    sublabel: 'Play the audio again',
+                                    color: T.primary,
+                                    bgColor: T.primaryLighter,
+                                    onTap: _speak,
+                                  ),
+                                ),
+                                const SizedBox(width: T.s12),
+                                Expanded(
+                                  child: _ActionButton(
+                                    icon: Icons.check_circle,
+                                    label: 'Dismiss',
+                                    sublabel: 'Mark as seen',
+                                    color: T.known,
+                                    bgColor: T.knownBg,
+                                    onTap: () => Navigator.of(context).pop(),
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ),
@@ -1059,5 +1092,221 @@ class _ActionButton extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+// ─── Inline video player for an event clip ───────────────────────────────────
+
+class _EventVideoPlayerScreen extends StatefulWidget {
+  const _EventVideoPlayerScreen({
+    required this.url,
+    required this.eventId,
+  });
+
+  final String url;
+  final String eventId;
+
+  @override
+  State<_EventVideoPlayerScreen> createState() =>
+      _EventVideoPlayerScreenState();
+}
+
+class _EventVideoPlayerScreenState extends State<_EventVideoPlayerScreen> {
+  late VideoPlayerController _controller;
+  bool _initialized = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url))
+      ..initialize().then((_) {
+        if (mounted) {
+          setState(() => _initialized = true);
+          _controller.play();
+        }
+      }).catchError((e) {
+        if (mounted) {
+          setState(() => _error = 'Could not load video: $e');
+        }
+      });
+    _controller.addListener(() {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        title: Text('Event ${widget.eventId}',
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+            )),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+      ),
+      body: Center(
+        child: _error != null
+            ? Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.videocam_off,
+                      size: 56, color: Colors.redAccent),
+                  const SizedBox(height: T.s16),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: T.s32),
+                    child: Text(
+                      'No recording available for this event.\n\n$_error',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                  ),
+                  const SizedBox(height: T.s16),
+                  FilledButton.icon(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.arrow_back),
+                    label: const Text('Go back'),
+                  ),
+                ],
+              )
+            : !_initialized
+                ? Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const CircularProgressIndicator(color: Colors.white),
+                      const SizedBox(height: T.s16),
+                      Text('Loading video...',
+                          style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.7))),
+                    ],
+                  )
+                : _buildPlayer(),
+      ),
+    );
+  }
+
+  Widget _buildPlayer() {
+    final duration = _controller.value.duration;
+    final position = _controller.value.position;
+    final isPlaying = _controller.value.isPlaying;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        AspectRatio(
+          aspectRatio: _controller.value.aspectRatio,
+          child: VideoPlayer(_controller),
+        ),
+        const SizedBox(height: T.s16),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: T.s24),
+          child: Column(
+            children: [
+              SliderTheme(
+                data: SliderThemeData(
+                  activeTrackColor: T.primary,
+                  inactiveTrackColor: Colors.white24,
+                  thumbColor: Colors.white,
+                  thumbShape:
+                      const RoundSliderThumbShape(enabledThumbRadius: 7),
+                  overlayShape:
+                      const RoundSliderOverlayShape(overlayRadius: 14),
+                  trackHeight: 3,
+                ),
+                child: Slider(
+                  value: duration.inMilliseconds > 0
+                      ? position.inMilliseconds / duration.inMilliseconds
+                      : 0,
+                  onChanged: (v) {
+                    _controller.seekTo(Duration(
+                        milliseconds:
+                            (v * duration.inMilliseconds).toInt()));
+                  },
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: T.s8),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(_fmt(position),
+                        style: const TextStyle(
+                            color: Colors.white70, fontSize: 12)),
+                    Text(_fmt(duration),
+                        style: const TextStyle(
+                            color: Colors.white70, fontSize: 12)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: T.s8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            IconButton(
+              onPressed: () {
+                final target = position - const Duration(seconds: 10);
+                _controller.seekTo(
+                    target < Duration.zero ? Duration.zero : target);
+              },
+              icon: const Icon(Icons.replay_10),
+              iconSize: 32,
+              color: Colors.white,
+            ),
+            const SizedBox(width: T.s16),
+            GestureDetector(
+              onTap: () {
+                isPlaying ? _controller.pause() : _controller.play();
+              },
+              child: Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                  color: T.primary,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  isPlaying ? Icons.pause : Icons.play_arrow,
+                  size: 32,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+            const SizedBox(width: T.s16),
+            IconButton(
+              onPressed: () {
+                final target = position + const Duration(seconds: 10);
+                _controller.seekTo(
+                    target > duration ? duration : target);
+              },
+              icon: const Icon(Icons.forward_10),
+              iconSize: 32,
+              color: Colors.white,
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  String _fmt(Duration d) {
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$m:$s';
   }
 }
